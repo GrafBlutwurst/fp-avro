@@ -14,6 +14,11 @@ import org.apache.avro.generic.GenericRecord
 import scala.collection.JavaConverters._
 import scala.collection.immutable.ListMap
 
+
+/**
+  *  This is a collection of Algebras to use with FP-Avro:
+  *  e.g. to get from a schema to an internal representation
+**/
 object AvroAlgebra {
   val avroSchemaToInternalType:Coalgebra[AvroType, Schema] = (schema:Schema) => schema.getType match {
     case Type.NULL => AvroNull()
