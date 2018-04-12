@@ -15,6 +15,7 @@ object Data{
     * This makes sure that a List of AvroTypes actually forms a valid Union as defined in
     *  https://avro.apache.org/docs/1.8.1/spec.html#Unions
   **/
+  //FIXME: Move this to a DSL when we get to the schema builder
   /*implicit val validateUnionMembers: Validate.Plain[List[AvroType], AvroValidUnion] = 
     Validate.fromPredicate(
       lst =>{ 
@@ -53,23 +54,23 @@ object Data{
   sealed trait AvroType[A]
 
   sealed trait AvroPrimitiveType[A] extends AvroType[A]
-  final case class AvroNull[A]() extends AvroPrimitiveType[A]
-  final case class AvroBoolean[A]() extends AvroPrimitiveType[A]
-  final case class AvroInt[A]() extends AvroPrimitiveType[A]
-  final case class AvroLong[A]() extends AvroPrimitiveType[A]
-  final case class AvroFloat[A]() extends AvroPrimitiveType[A]
-  final case class AvroDouble[A]() extends AvroPrimitiveType[A]
-  final case class AvroBytes[A]() extends AvroPrimitiveType[A]
-  final case class AvroString[A]() extends AvroPrimitiveType[A]
+  final case class AvroNullType[A]() extends AvroPrimitiveType[A]
+  final case class AvroBooleanType[A]() extends AvroPrimitiveType[A]
+  final case class AvroIntType[A]() extends AvroPrimitiveType[A]
+  final case class AvroLongType[A]() extends AvroPrimitiveType[A]
+  final case class AvroFloatType[A]() extends AvroPrimitiveType[A]
+  final case class AvroDoubleType[A]() extends AvroPrimitiveType[A]
+  final case class AvroBytesType[A]() extends AvroPrimitiveType[A]
+  final case class AvroStringType[A]() extends AvroPrimitiveType[A]
 
 
   sealed trait AvroComplexType[A] extends AvroType[A]
-  final case class AvroRecord[A](namespace:String, name:String, doc:Option[String], aliases:Option[Set[String]], fields:ListMap[AvroRecordFieldMetaData, A]) extends AvroComplexType[A]
-  final case class AvroEnum[A](namespace:String, name:String, doc:Option[String], aliases:Option[Set[String]], symbols:List[String]) extends AvroComplexType[A]
-  final case class AvroArray[A](items:A) extends AvroComplexType[A]
-  final case class AvroMap[A](values:A) extends AvroComplexType[A]
-  final case class AvroUnion[A](members:List[A] /*Refined AvroValidUnion*/) extends AvroComplexType[A]
-  final case class AvroFixed[A](namespace: String, name:String, aliases:Option[Set[String]], length:Int) extends AvroComplexType[A]
+  final case class AvroRecordType[A](namespace:String, name:String, doc:Option[String], aliases:Option[Set[String]], fields:ListMap[AvroRecordFieldMetaData, A]) extends AvroComplexType[A]
+  final case class AvroEnumType[A](namespace:String, name:String, doc:Option[String], aliases:Option[Set[String]], symbols:List[String]) extends AvroComplexType[A]
+  final case class AvroArrayType[A](items:A) extends AvroComplexType[A]
+  final case class AvroMapType[A](values:A) extends AvroComplexType[A]
+  final case class AvroUnionType[A](members:List[A] /*Refined AvroValidUnion*/) extends AvroComplexType[A]
+  final case class AvroFixedType[A](namespace: String, name:String, aliases:Option[Set[String]], length:Int) extends AvroComplexType[A]
 
 
   final case class AvroRecordFieldMetaData(name:String, doc:Option[String], default:Option[String], order:Option[AvroRecordSortOrder], aliases:Option[Set[String]]) //FIXME: default should somehow have something to do with the Avro type? does Default work for complex types? e.g. a field that is itself a records? if so how is it represented? JSON encoding? In schema it's a JSON Node. Evaluating that might require the recursive Datatype for instances we still have to do
@@ -82,25 +83,25 @@ object Data{
 
 
 
-  sealed trait AvroGenericRecord[A]
+  sealed trait AvroValue[S, A]
 
-  sealed trait AvroGenericRecordPrimitive[A] extends AvroGenericRecord[A]
-  final case class AvroNullValue[A]() extends AvroGenericRecordPrimitive[A]
-  final case class AvroBooleanValue[A](value:Boolean) extends AvroGenericRecordPrimitive[A]
-  final case class AvroIntValue[A](value:Int) extends AvroGenericRecordPrimitive[A]
-  final case class AvroLongValue[A](value:Long) extends AvroGenericRecordPrimitive[A]
-  final case class AvroFloatValue[A](value:Float) extends AvroGenericRecordPrimitive[A]
-  final case class AvroDoubleValue[A](value:Double) extends AvroGenericRecordPrimitive[A]
-  final case class AvroBytesValue[A](value: Vector[Byte]) extends AvroGenericRecordPrimitive[A]
-  final case class AvroStringValue[A](value: String) extends AvroGenericRecordPrimitive[A]
+  sealed trait AvroPrimitiveValue[S, A] extends AvroValue[S, A]
+  final case class AvroNullValue[S, A](schema:AvroNullType[S]) extends AvroPrimitiveValue[S, A]
+  final case class AvroBooleanValue[S, A](schema:AvroBooleanType[S], value:Boolean) extends AvroPrimitiveValue[S, A]
+  final case class AvroIntValue[S, A](schema:AvroIntType[S], value:Int) extends AvroPrimitiveValue[S, A]
+  final case class AvroLongValue[S, A](schema:AvroLongType[S], value:Long) extends AvroPrimitiveValue[S, A]
+  final case class AvroFloatValue[S, A](schema:AvroFloatType[S], value:Float) extends AvroPrimitiveValue[S, A]
+  final case class AvroDoubleValue[S, A](schema:AvroDoubleType[S], value:Double) extends AvroPrimitiveValue[S, A]
+  final case class AvroBytesValue[S, A](schema:AvroBytesType[S], value: Vector[Byte]) extends AvroPrimitiveValue[S, A]
+  final case class AvroStringValue[S, A](schema:AvroStringType[S], value: String) extends AvroPrimitiveValue[S, A]
 
-  sealed trait AvroGenericRecordComplex[A] extends AvroGenericRecord[A]
-  final case class AvroRecordValue[A](fields:ListMap[String, AvroGenericRecord[_]]) extends AvroGenericRecordComplex[A] //FIXME: this is not right. Fields can be of differing types. 
-  final case class AvroEnumValue[A](symbol:String) extends AvroGenericRecordComplex[A]
-  final case class AvroArrayValue[A](items:List[A]) extends AvroGenericRecordComplex[A]
-  final case class AvroMapValue[A](values:Map[String, A]) extends AvroGenericRecordComplex[A]
-  final case class AvroUnionValue[A](member:A) extends AvroGenericRecordComplex[A]
-  final case class AvroFixedValue[A](bytes:Vector[Byte]) extends AvroGenericRecordComplex[A] //FIXME: looks a lot like regular bytes. doublecheck in specification
+  sealed trait AvroComplexValue[S, A] extends AvroValue[S, A]
+  final case class AvroRecordValue[S, A](schema:AvroRecordType[S], fields:ListMap[String, A]) extends AvroComplexValue[S, A] //FIXME: this is not right. Fields can be of differing types. 
+  final case class AvroEnumValue[S, A](schema:AvroEnumType[S], symbol:String) extends AvroComplexValue[S, A]
+  final case class AvroArrayValue[S, A](schema:AvroArrayType[S], items:List[A]) extends AvroComplexValue[S, A]
+  final case class AvroMapValue[S, A](schema:AvroMapType[S], values:Map[String, A]) extends AvroComplexValue[S, A]
+  final case class AvroUnionValue[S, A](schema:AvroUnionType[S], member:A) extends AvroComplexValue[S, A]
+  final case class AvroFixedValue[S, A](schema:AvroFixedType[S], bytes:Vector[Byte]) extends AvroComplexValue[S, A] //FIXME: looks a lot like regular bytes. doublecheck in specification
 
 
 
