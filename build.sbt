@@ -28,10 +28,16 @@ scalacOptions ++= Seq(
   "-Ywarn-value-discard"               // Warn when non-Unit expression results are unused.
 )
 
+resolvers ++= Seq(
+  Resolver.sonatypeRepo("releases"),
+  Resolver.sonatypeRepo("snapshots")
+)
+
 //Scala Dependencies
 libraryDependencies ++= Seq(
   "eu.timepit"    %% "refined"         % "0.8.7",
-  "com.slamdata"  %% "matryoshka-core" % "0.18.3"
+  "com.slamdata"  %% "matryoshka-core" % "0.18.3",
+  "com.chuusai"   %% "shapeless"       % "2.3.3"
 )
 
 //Java Dependencies

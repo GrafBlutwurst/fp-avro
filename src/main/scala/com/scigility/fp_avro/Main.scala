@@ -2,6 +2,7 @@ package com
 package scigility
 package fp_avro
 
+import java.io.File
 import matryoshka.data.Fix
 import org.apache.avro.Schema
 
@@ -9,6 +10,11 @@ import matryoshka._
 import matryoshka.implicits._
 import implicits._
 import Data._
+import org.apache.avro.file.{ DataFileReader, DataFileWriter }
+import org.apache.avro.generic.{ GenericData, GenericDatumReader, GenericDatumWriter, GenericRecord }
+import scalaz._
+import Scalaz._
+
 
 object Main{
 
@@ -20,6 +26,31 @@ object Main{
 
     println(schemaInternal)
 
+
+    val genRec = new GenericData.Record(schema)
+    genRec.put("first", "ASDF")
+    genRec.put("last", "FOO")
+
+    val avroFile = new File("avro.avro")
+    val datumWriter = new GenericDatumWriter[GenericRecord](schema)
+    val dataFileWriter = new DataFileWriter[GenericRecord](datumWriter)
+    dataFileWriter.create(schema, avroFile)
+    dataFileWriter.append(genRec)
+    dataFileWriter.close
+
+
+    val datumReader = new GenericDatumReader[GenericRecord](schema)
+    val datafileReader = new DataFileReader[GenericRecord](avroFile, datumReader)
+    val deserializedGenRec = datafileReader.next
+
+
+    val pair:(Fix[AvroType], Any) = (schemaInternal, deserializedGenRec)
+    val alg = AvroAlgebra.avroGenericReprToInternal[Fix]
+
+    val out = pair.anaM[Fix[AvroValue[Fix[AvroType], ?]]](alg)
+    println(out)
+
   }
 
 }
+
