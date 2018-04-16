@@ -51,6 +51,7 @@ object Data{
     )*/
 
   //Avro Types required to represent Schemata
+  //TODO: extend with logical types and arbitraty properties
   sealed trait AvroType[A]
 
   sealed trait AvroPrimitiveType[A] extends AvroType[A]
@@ -96,12 +97,12 @@ object Data{
   final case class AvroStringValue[S, A](schema:AvroStringType[S], value: String) extends AvroPrimitiveValue[S, A]
 
   sealed trait AvroComplexValue[S, A] extends AvroValue[S, A]
-  final case class AvroRecordValue[S, A](schema:AvroRecordType[S], fields:ListMap[String, A]) extends AvroComplexValue[S, A] //FIXME: this is not right. Fields can be of differing types. 
+  final case class AvroRecordValue[S, A](schema:AvroRecordType[S], fields:ListMap[String, A]) extends AvroComplexValue[S, A] 
   final case class AvroEnumValue[S, A](schema:AvroEnumType[S], symbol:String) extends AvroComplexValue[S, A]
   final case class AvroArrayValue[S, A](schema:AvroArrayType[S], items:List[A]) extends AvroComplexValue[S, A]
   final case class AvroMapValue[S, A](schema:AvroMapType[S], values:Map[String, A]) extends AvroComplexValue[S, A]
   final case class AvroUnionValue[S, A](schema:AvroUnionType[S], member:A) extends AvroComplexValue[S, A]
-  final case class AvroFixedValue[S, A](schema:AvroFixedType[S], bytes:Vector[Byte]) extends AvroComplexValue[S, A] //FIXME: looks a lot like regular bytes. doublecheck in specification
+  final case class AvroFixedValue[S, A](schema:AvroFixedType[S], bytes:Vector[Byte]) extends AvroComplexValue[S, A]
 
 
 

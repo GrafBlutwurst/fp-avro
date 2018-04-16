@@ -66,9 +66,7 @@ object AvroAlgebra {
     case Type.FIXED => AvroFixedType(schema.getNamespace, schema.getName, Option(schema.getAliases).map(_.asScala.toSet), schema.getFixedSize) 
   }
 
-  //God I feel so dirty doing this. This needs somebody more advanced in typemagic
-//  private[this] def cast[A,B](a:A)(implicit tta:TypeTag[A], ttb:TypeTag[B]):Either[String, B] = if (a.isInstanceOf[B]) Right(a.asInstanceOf[B]) else Left(s"cast failed: a  = ${tta.tpe}, b = ${ttb.tpe}")
- //FIXME: Requires refactor pass (error reporting, and waaaay too much repetition)
+ //FIXME: Requires refactor pass (error reporting, think if we can streamline the reverse union matching )
   def avroGenericReprToInternal[F[_[_]]](implicit birec:Birecursive.Aux[F[AvroType], AvroType]):CoalgebraM[Either[String, ?], AvroValue[F[AvroType], ?], (F[AvroType], Any)] = (tp:(F[AvroType], Any)) => { 
 
     def castValue[T: Typeable](rawJavaValue:Any, schema:AvroType[F[AvroType]])(implicit tt:TypeTag[T]):Either[String, (F[AvroType], T)] = {
@@ -80,26 +78,6 @@ object AvroAlgebra {
         }
       )
     }
-    
-
-    //FIXME: this needs some better typehanlding to get safer behaviour. right now this just throws which is not acceptable
-    //BUG: see above
-    /*def castValue[T](rawJavaValue:Any, schema:AvroType[F[AvroType]])(implicit tt:TypeTag[T]):Either[String, (F[AvroType], T)] = {
-      val rawE = if (rawJavaValue != null) Right(rawJavaValue) else Left(s"item at $schema was null on selection")
-      val casted = rawE.flatMap( 
-        raw => { 
-          try {
-            Right(raw.asInstanceOf[T])
-          } catch {
-            case _ => Left(s"could not cast because item was not of Type ${tt.tpe}")
-          }
-        }
-      )
-      casted.map(x => (birec.embed(schema), x))
-    }*/
-
-    
-
     val outerSchema = birec.project(tp._1) 
 
     def refineInstance(componentSchema:AvroType[F[AvroType]]): Any => Either[String, (F[AvroType], Any)] = componentSchema match {
