@@ -19,7 +19,7 @@ import Scalaz._
 object Main{
 
   def main(args:Array[String]):Unit = {
-    val schemaString = """{     "type": "record",     "namespace": "com.example",     "name": "FullName",     "fields": [       { "name": "first", "type": "string" },       { "name": "last", "type": "string" }     ]} """
+    val schemaString = """{     "type": "record",     "namespace": "com.example",     "name": "FullName",     "fields": [       { "name": "first", "type": "string" },       { "name": "last", "type": "string" }, {"name": "uniontest", "type": ["null","string","int"]}     ]} """
     val schema:Schema = (new Schema.Parser).parse(schemaString)
     
     val schemaInternal = schema.ana[Fix[AvroType]](AvroAlgebra.avroSchemaToInternalType)
@@ -30,18 +30,21 @@ object Main{
     val genRec = new GenericData.Record(schema)
     genRec.put("first", "ASDF")
     genRec.put("last", "FOO")
+    genRec.put("uniontest", 4)
 
     val avroFile = new File("avro.avro")
-    val datumWriter = new GenericDatumWriter[GenericRecord](schema)
-    val dataFileWriter = new DataFileWriter[GenericRecord](datumWriter)
+    val datumWriter = new GenericDatumWriter[GenericData.Record](schema)
+    val dataFileWriter = new DataFileWriter[GenericData.Record](datumWriter)
     dataFileWriter.create(schema, avroFile)
     dataFileWriter.append(genRec)
     dataFileWriter.close
 
 
-    val datumReader = new GenericDatumReader[GenericRecord](schema)
-    val datafileReader = new DataFileReader[GenericRecord](avroFile, datumReader)
+    val datumReader = new GenericDatumReader[GenericData.Record](schema)
+    val datafileReader = new DataFileReader[GenericData.Record](avroFile, datumReader)
     val deserializedGenRec = datafileReader.next
+
+    println(deserializedGenRec.get("uniontest").getClass.getName)
 
 
     val pair:(Fix[AvroType], Any) = (schemaInternal, deserializedGenRec)

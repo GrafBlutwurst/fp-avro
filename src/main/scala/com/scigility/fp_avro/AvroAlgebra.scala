@@ -3,10 +3,7 @@ package scigility
 package fp_avro
 
 
-import matryoshka.{ Recursive, _ }
-import matryoshka.data.Fix
-import matryoshka.implicits._
-import matryoshka.patterns.EnvT
+import matryoshka._
 import org.apache.avro.{ Schema }
 import org.apache.avro.Schema.Type
 import org.apache.avro.Schema.Field.Order
@@ -20,8 +17,8 @@ import implicits._
 import scala.reflect.runtime.universe._
 import scalaz._
 import Scalaz._
-import shapeless.Typeable
 import syntax.traverse._
+import shapeless.Typeable
 import shapeless.Typeable._
 /**
   *  This is a collection of Algebras to use with FP-Avro:
@@ -71,70 +68,69 @@ object AvroAlgebra {
 
   //God I feel so dirty doing this. This needs somebody more advanced in typemagic
 //  private[this] def cast[A,B](a:A)(implicit tta:TypeTag[A], ttb:TypeTag[B]):Either[String, B] = if (a.isInstanceOf[B]) Right(a.asInstanceOf[B]) else Left(s"cast failed: a  = ${tta.tpe}, b = ${ttb.tpe}")
- //FIXME: Requires refactor pass
+ //FIXME: Requires refactor pass (error reporting, and waaaay too much repetition)
   def avroGenericReprToInternal[F[_[_]]](implicit birec:Birecursive.Aux[F[AvroType], AvroType]):CoalgebraM[Either[String, ?], AvroValue[F[AvroType], ?], (F[AvroType], Any)] = (tp:(F[AvroType], Any)) => { 
-    //Check if a value is not null and can be casted to type T 
-    //FIXME: provide instances and reenable?
-   /* def castValue[T: Typeable](rawJavaValue:Any, schema:AvroType[F[AvroType]], nullHint:String, typeHint:String)(implicit tt:TypeTag[T]):Either[String, (F[AvroType], T)] = {
-      val rawE = if (rawJavaValue != null) Right(rawJavaValue) else Left(s"$nullHint was null on selection")
+
+    def castValue[T: Typeable](rawJavaValue:Any, schema:AvroType[F[AvroType]])(implicit tt:TypeTag[T]):Either[String, (F[AvroType], T)] = {
+      val rawE = if (rawJavaValue != null) Right(rawJavaValue) else Left(s"item at $schema was null on selection")
+      rawE.flatMap( 
+        raw => Typeable[T].cast(raw) match {
+          case Some(t) => Right((birec.embed(schema), t))
+          case None => Left(s"Could not cast value $raw to ${tt.tpe}")
+        }
+      )
+    }
+    
+
+    //FIXME: this needs some better typehanlding to get safer behaviour. right now this just throws which is not acceptable
+    //BUG: see above
+    /*def castValue[T](rawJavaValue:Any, schema:AvroType[F[AvroType]])(implicit tt:TypeTag[T]):Either[String, (F[AvroType], T)] = {
+      val rawE = if (rawJavaValue != null) Right(rawJavaValue) else Left(s"item at $schema was null on selection")
       val casted = rawE.flatMap( 
         raw => { 
-          Typeable[T].cast(raw) match {
-            case Some(value) => Right(value)
-            case None => Left(s"$typeHint was not of Type ${tt.tpe}")
+          try {
+            Right(raw.asInstanceOf[T])
+          } catch {
+            case _ => Left(s"could not cast because item was not of Type ${tt.tpe}")
           }
         }
       )
       casted.map(x => (birec.embed(schema), x))
     }*/
 
-    def castValue[T](rawJavaValue:Any, schema:AvroType[F[AvroType]], nullHint:String, typeHint:String)(implicit tt:TypeTag[T]):Either[String, (F[AvroType], T)] = {
-      val rawE = if (rawJavaValue != null) Right(rawJavaValue) else Left(s"$nullHint was null on selection")
-      val casted = rawE.flatMap( 
-        raw => { 
-          try {
-            Right(raw.asInstanceOf[T])
-          } catch {
-            case _ => Left(s"$typeHint was not of Type ${tt.tpe}")
-          }
-        }
-      )
-      casted.map(x => (birec.embed(schema), x))
-    }
-
     
 
     val outerSchema = birec.project(tp._1) 
-    outerSchema match {
-      case nullSchema:AvroNullType[F[AvroType]] => Right(AvroNullValue(nullSchema))
-      case booleanSchema:AvroBooleanType[F[AvroType]] => castValue[Boolean](tp._2, outerSchema, "booleanInstance", "booleanInstance").map(tpl => AvroBooleanValue(booleanSchema, tpl._2))
-      case intSchema:AvroIntType[F[AvroType]] => castValue[Int](tp._2, outerSchema, "intInstance", "intInstance").map(tpl => AvroIntValue(intSchema, tpl._2))
-      case longSchema:AvroLongType[F[AvroType]] => castValue[Long](tp._2, outerSchema, "longInstance", "longInstance").map(tpl => AvroLongValue(longSchema, tpl._2))
-      case floatSchema:AvroFloatType[F[AvroType]] => castValue[Float](tp._2, outerSchema, "floatInstace", "floatInstance").map(tpl => AvroFloatValue(floatSchema, tpl._2))
-      case doubleSchema:AvroDoubleType[F[AvroType]] => castValue[Double](tp._2, outerSchema, "doubleInstance", "doubleInstance").map(tpl => AvroDoubleValue(doubleSchema, tpl._2))
-      case bytesSchema:AvroBytesType[F[AvroType]] => castValue[java.nio.ByteBuffer](tp._2, outerSchema, "bytesInstance", "bytesInstance").map(tpl => AvroBytesValue(bytesSchema, tpl._2.array.toVector))
-      case stringSchema:AvroStringType[F[AvroType]] => castValue[org.apache.avro.util.Utf8](tp._2, outerSchema, "stringInstance", "stringInstance").map(tpl => AvroStringValue(stringSchema, tpl._2.toString))
-      case rec:AvroRecordType[F[AvroType]] =>  {
 
-        //refines an arbitrary AvroType and its value checking if the types match up and wrapping them in an either with the Any being casted to the expected input type of the outerSchema patternmatch 
-        def refineInstance(value:Any, schema:AvroType[F[AvroType]], nullHint:String, typeHint:String ): Either[String, (F[AvroType], Any)] = schema match {
-          case AvroNullType() => Right((birec.embed(schema), null))
-          case AvroBooleanType() => castValue[Boolean](value, schema, nullHint, typeHint)
-          case AvroIntType() => castValue[Int](value, schema, nullHint, typeHint)
-          case AvroLongType() => castValue[Long](value, schema, nullHint, typeHint)
-          case AvroFloatType() => castValue[Float](value, schema, nullHint, typeHint)
-          case AvroDoubleType() => castValue[Double](value, schema, nullHint, typeHint)
-          case AvroBytesType() => castValue[java.nio.ByteBuffer](value, schema, nullHint, typeHint)
-          case AvroStringType() => castValue[org.apache.avro.util.Utf8](value, schema, nullHint, typeHint)
-          case _: AvroRecordType[F[AvroType]] =>  castValue[GenericRecord](value, schema, nullHint, typeHint)
-          case _: AvroEnumType[F[AvroType]] => castValue[GenericData.EnumSymbol](value, schema, nullHint, typeHint).map(tpl => tpl._1 -> tpl._2.toString)
-          case _: AvroArrayType[F[AvroType]] => castValue[GenericData.Array[Any]](value, schema, nullHint, typeHint).map(tpl => tpl._1 -> tpl._2.iterator.asScala.toList)
-          case _: AvroMapType[F[AvroType]] => castValue[java.util.HashMap[String, AnyRef]](value, schema, nullHint, typeHint).map(tpl => tpl._1 -> tpl._2.asScala.toMap)
-          case _: AvroUnionType[F[AvroType]] => ??? //FIXME: how do Unions work? are they unified to Object and are at runtime one of the members specified on the schema?
-          case _: AvroFixedType[F[AvroType]] => castValue[GenericData.Fixed](value, schema, nullHint, typeHint).map(tpl => tpl._1 -> tpl._2.bytes().toVector)
+    def refineInstance(componentSchema:AvroType[F[AvroType]]): Any => Either[String, (F[AvroType], Any)] = componentSchema match {
+          case AvroNullType() => _ =>  Right((birec.embed(componentSchema), null))
+          case AvroBooleanType() => value => castValue[Boolean](value, componentSchema)
+          case AvroIntType() => value => castValue[Int](value, componentSchema)
+          case AvroLongType() => value => castValue[Long](value, componentSchema)
+          case AvroFloatType() => value => castValue[Float](value, componentSchema)
+          case AvroDoubleType() => value => castValue[Double](value, componentSchema)
+          case AvroBytesType() => value => castValue[java.nio.ByteBuffer](value, componentSchema)
+          case AvroStringType() => value => castValue[org.apache.avro.util.Utf8](value, componentSchema)
+          case _: AvroRecordType[_] => value =>  castValue[GenericData.Record](value, componentSchema)
+          case _: AvroEnumType[_] => value => castValue[GenericData.EnumSymbol](value, componentSchema)
+          case _: AvroArrayType[_] => value => castValue[GenericData.Array[Any]](value, componentSchema)
+          case _: AvroMapType[_] => value => castValue[java.util.HashMap[String, Any]](value, componentSchema)
+          case _: AvroUnionType[_] => value => Right((birec.embed(componentSchema), value)) //In case of the union it needs to be handled downstream. a union is represented as just a java.lang.object and can actually be any of it's members
+          case _: AvroFixedType[_] => value => castValue[GenericData.Fixed](value, componentSchema)
         }
 
-        val shouldBeRec = if (tp._2.isInstanceOf[GenericRecord]) Right(tp._2.asInstanceOf[GenericRecord]) else Left(s"Passed object ${tp._2} was not castable to GenericRecord. Schema: $rec")
+
+    outerSchema match {
+      case nullSchema:AvroNullType[F[AvroType]] => Right(AvroNullValue(nullSchema))
+      case booleanSchema:AvroBooleanType[F[AvroType]] => castValue[Boolean](tp._2, outerSchema).map(tpl => AvroBooleanValue(booleanSchema, tpl._2))
+      case intSchema:AvroIntType[F[AvroType]] => castValue[Int](tp._2, outerSchema).map(tpl => AvroIntValue(intSchema, tpl._2))
+      case longSchema:AvroLongType[F[AvroType]] => castValue[Long](tp._2, outerSchema).map(tpl => AvroLongValue(longSchema, tpl._2))
+      case floatSchema:AvroFloatType[F[AvroType]] => castValue[Float](tp._2, outerSchema).map(tpl => AvroFloatValue(floatSchema, tpl._2))
+      case doubleSchema:AvroDoubleType[F[AvroType]] => castValue[Double](tp._2, outerSchema).map(tpl => AvroDoubleValue(doubleSchema, tpl._2))
+      case bytesSchema:AvroBytesType[F[AvroType]] => castValue[java.nio.ByteBuffer](tp._2, outerSchema).map(tpl => AvroBytesValue(bytesSchema, tpl._2.array.toVector))
+      case stringSchema:AvroStringType[F[AvroType]] => castValue[org.apache.avro.util.Utf8](tp._2, outerSchema).map(tpl => AvroStringValue(stringSchema, tpl._2.toString))
+      case rec:AvroRecordType[F[AvroType]] =>  {
+        val shouldBeRec = castValue[GenericData.Record](tp._2, rec).map(_._2)
         shouldBeRec.flatMap(
           gRec => {
             val lmTraverse = Traverse[ListMap[String, ?]]
@@ -144,64 +140,239 @@ object AvroAlgebra {
                 val fieldName = kv._1.name
                 val schema:AvroType[F[AvroType]] = birec.project(kv._2)
                 val value = gRec.get(fieldName)
-                refineInstance(value, schema, fieldName, fieldName)
+                refineInstance(schema)(value)
               }
             )
             fields.map( flds => AvroRecordValue(rec,flds))
           }
         )
       }
-      case enumSchema:AvroEnumType[F[AvroType]] => castValue[String](tp._2, outerSchema, "enumInstance", "enumInstance").map(tpl => AvroEnumValue(enumSchema, tpl._2))
+      case enumSchema:AvroEnumType[F[AvroType]] => castValue[GenericData.EnumSymbol](tp._2, outerSchema).map(tpl => AvroEnumValue(enumSchema, tpl._2.toString))
       case arraySchema:AvroArrayType[F[AvroType]] => {
-        val nullHint = "arrayElement"
-        val typeHint = "arrayElement"
-        // this was hetrogenous elements should be detected in the List[Any]
-        val refineInstance: Any => Either[String, (F[AvroType], Any)] = arraySchema.items match {
-          case AvroNullType() => _ =>  Right((birec.embed(outerSchema), null))
-          case AvroBooleanType() => value => castValue[Boolean](value, outerSchema, nullHint, typeHint)
-          case AvroIntType() => value => castValue[Int](value, outerSchema, nullHint, typeHint)
-          case AvroLongType() => value => castValue[Long](value, outerSchema, nullHint, typeHint)
-          case AvroFloatType() => value => castValue[Float](value, outerSchema, nullHint, typeHint)
-          case AvroDoubleType() => value => castValue[Double](value, outerSchema, nullHint, typeHint)
-          case AvroBytesType() => value => castValue[java.nio.ByteBuffer](value, outerSchema, nullHint, typeHint)
-          case AvroStringType() => value => castValue[org.apache.avro.util.Utf8](value, outerSchema, nullHint, typeHint)
-          case _: AvroRecordType[F[AvroType]] => value =>  castValue[GenericRecord](value, outerSchema, nullHint, typeHint)
-          case _: AvroEnumType[F[AvroType]] => value => castValue[GenericData.EnumSymbol](value, outerSchema, nullHint, typeHint).map(tpl =>  tpl._1 -> tpl._2.toString)
-          case _: AvroArrayType[F[AvroType]] => value => castValue[GenericData.Array[Any]](value, outerSchema, nullHint, typeHint).map(tpl =>  tpl._1 -> tpl._2.iterator.asScala.toList)
-          case _: AvroMapType[F[AvroType]] => value => castValue[java.util.HashMap[String, AnyRef]](value, outerSchema, nullHint, typeHint).map(tpl =>  tpl._1 -> tpl._2.asScala.toMap)
-          case _: AvroUnionType[F[AvroType]] => value => ??? //FIXME: how do Unions work? are they unified to Object and are at runtime one of the members specified on the outerSchema?
-          case _: AvroFixedType[F[AvroType]] => value => castValue[GenericData.Fixed](value, outerSchema, nullHint, typeHint).map(tpl =>  tpl._1 -> tpl._2.bytes().toVector)
-        }
-
-        val elemsE = if (tp._2.isInstanceOf[List[Any]]) Right(tp._2.asInstanceOf[List[Any]]) else Left(s"Passed object ${tp._2} was not castable to List[Any]. Schema: $arraySchema")
-        elemsE.flatMap(elem => Traverse[List].traverse(elem)(refineInstance)).map( elems => AvroArrayValue(arraySchema, elems) )
+        val refinement = refineInstance(birec.project(arraySchema.items))
+        val elemsE = castValue[GenericData.Array[Any]](tp._2, arraySchema).map(_._2.iterator.asScala.toList)
+        elemsE.flatMap(elem => Traverse[List].traverse(elem)(refinement)).map( elems => AvroArrayValue(arraySchema, elems) )
       }
       case mapSchema: AvroMapType[F[AvroType]] => {
-        val nullHint = "arrayElement"
-        val typeHint = "arrayElement"
-        // this was hetrogenous elements should be detected in the List[Any]
-        val refineInstance: Any => Either[String, (F[AvroType], Any)] = mapSchema.values match {
-          case AvroNullType() => _ =>  Right((birec.embed(outerSchema), null))
-          case AvroBooleanType() => value => castValue[Boolean](value, outerSchema, nullHint, typeHint)
-          case AvroIntType() => value => castValue[Int](value, outerSchema, nullHint, typeHint)
-          case AvroLongType() => value => castValue[Long](value, outerSchema, nullHint, typeHint)
-          case AvroFloatType() => value => castValue[Float](value, outerSchema, nullHint, typeHint)
-          case AvroDoubleType() => value => castValue[Double](value, outerSchema, nullHint, typeHint)
-          case AvroBytesType() => value => castValue[java.nio.ByteBuffer](value, outerSchema, nullHint, typeHint)
-          case AvroStringType() => value => castValue[org.apache.avro.util.Utf8](value, outerSchema, nullHint, typeHint)
-          case _: AvroRecordType[_] => value =>  castValue[GenericRecord](value, outerSchema, nullHint, typeHint)
-          case _: AvroEnumType[F[AvroType]] => value => castValue[GenericData.EnumSymbol](value, outerSchema, nullHint, typeHint).map(tpl =>  tpl._1 -> tpl._2.toString)
-          case _: AvroArrayType[F[AvroType]] => value => castValue[GenericData.Array[Any]](value, outerSchema, nullHint, typeHint).map(tpl =>  tpl._1 -> tpl._2.iterator.asScala.toList)
-          case _: AvroMapType[F[AvroType]] => value => castValue[java.util.HashMap[String, AnyRef]](value, outerSchema, nullHint, typeHint).map(tpl =>  tpl._1 -> tpl._2.asScala.toMap)
-          case _: AvroUnionType[F[AvroType]] => value => ??? //FIXME: how do Unions work? are they unified to Object and are at runtime one of the members specified on the outerSchema?
-          case _: AvroFixedType[F[AvroType]] => value => castValue[GenericData.Fixed](value, outerSchema, nullHint, typeHint)
-        }
-
-        val elemsE = if (tp._2.isInstanceOf[Map[String, Any]]) Right(tp._2.asInstanceOf[Map[String, Any]]) else Left(s"Passed object ${tp._2} was not castable to Map[String, Any]. Schema: $mapSchema")
-        elemsE.flatMap(elem => Traverse[Map[String,?]].traverse(elem)(refineInstance)).map( elems => AvroMapValue(mapSchema, elems) )
+        val refinement = refineInstance(birec.project(mapSchema.values))
+        val elemsE = castValue[java.util.HashMap[String, Any]](tp._2, mapSchema).map(_._2.asScala.toMap)
+        elemsE.flatMap(elem => Traverse[Map[String,?]].traverse(elem)(refinement)).map( elems => AvroMapValue(mapSchema, elems) )
       }
-      case unionSchema: AvroUnionType[F[AvroType]] => ??? //FIXME: Still the union issue
-      case fixedSchema: AvroFixedType[F[AvroType]] => castValue[GenericData.Fixed](tp._2, outerSchema, "fixedInstance", "fixedInstance").map(tpl => AvroFixedValue(fixedSchema, tpl._2.bytes.toVector))
+      case unionSchema: AvroUnionType[F[AvroType]] => {
+        //In case of a union we need to reverse match the whole thing. take the value and match it's type against the described members in the unionSchema. if there's a fit apply it if not throw an error
+        //For types that can occur multiple times in a union (Fixed, Enum, Record) we'll match on namespace and name
+        tp._2 match {
+          case null => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case AvroNullType() => true
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain a NullType")
+            )(
+              memberSchema => refineInstance(memberSchema)(null).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:Boolean => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case AvroBooleanType() => true
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain a BooleanType")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:Int => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case AvroIntType() => true
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain a IntType")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:Long => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case AvroLongType() => true
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain a LongType")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:Float => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case AvroFloatType() => true
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain a FloatType")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:Double => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case AvroDoubleType() => true
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain a DoubleType")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:java.nio.ByteBuffer => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case AvroBytesType() => true
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain a BytesType")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:org.apache.avro.util.Utf8 => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case AvroStringType() => true
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain a StringType")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:GenericData.Record => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case recordType:AvroRecordType[_] => unionVal.getSchema.getNamespace == recordType.namespace && unionVal.getSchema.getName == recordType.name
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain a a Record type allowing this generic record to be properly decoded")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:GenericData.EnumSymbol => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case enumType:AvroEnumType[_] => unionVal.getSchema.getNamespace == enumType.namespace && unionVal.getSchema.getName == enumType.name
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain an EnumType of the proper namespace and name")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:GenericData.Array[_] => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case _:AvroArrayType[_] => true
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain an ArrayType")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:java.util.HashMap[_, _] => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case _:AvroMapType[_] => true
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain a Map Type")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+          case unionVal:GenericData.Fixed => {
+            val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
+              t => t match {
+                case fixedType:AvroFixedType[_] => unionVal.getSchema.getNamespace == fixedType.namespace && unionVal.getSchema.getName == fixedType.name
+                case _ => false
+              }
+            )
+
+            memberSchemaO.fold[Either[String, AvroValue[F[AvroType], (F[AvroType], Any)]]](
+              Left(s"Unresolved Union: ${unionSchema.members} did not contain an EnumType of the proper namespace and name")
+            )(
+              memberSchema => refineInstance(memberSchema)(unionVal).map( tpl => AvroUnionValue(unionSchema, tpl) )
+            )
+            
+          }
+
+        }
+      }
+      case fixedSchema: AvroFixedType[F[AvroType]] => castValue[GenericData.Fixed](tp._2, outerSchema).map(tpl => AvroFixedValue(fixedSchema, tpl._2.bytes.toVector))
     }
   }
 

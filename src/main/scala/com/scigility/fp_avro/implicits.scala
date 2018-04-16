@@ -9,6 +9,8 @@ import scalaz.Traverse
 import Data._
 import scalaz._
 import Scalaz._
+import shapeless.Typeable
+import scala.collection.JavaConverters._
 
 object implicits {
   //FIXME: change to traverse
@@ -71,6 +73,29 @@ object implicits {
       )
     }
 
+  }
+
+
+  implicit val hashMapStringAnyTypeable:Typeable[java.util.HashMap[String,Any]] = new Typeable[java.util.HashMap[String,Any]] {
+    def cast(t: Any):Option[java.util.HashMap[String,Any]] = t match {
+      case null => None
+      case refined:java.util.HashMap[_, _] => {
+        if (refined.keySet().asScala.forall( _.isInstanceOf[String] )) Some(refined.asInstanceOf[java.util.HashMap[String,Any]]) else None
+      }
+      case _ => None
+    }
+
+    def describe:String = "java.util.HashMap[String, Any]"
+  }
+
+  implicit val genericDataArrayAnyTypeable:Typeable[org.apache.avro.generic.GenericData.Array[Any]] = new Typeable[org.apache.avro.generic.GenericData.Array[Any]] {
+    def cast(t: Any):Option[org.apache.avro.generic.GenericData.Array[Any]] = t match {
+      case null => None
+      case refined:org.apache.avro.generic.GenericData.Array[_] => Some(refined.asInstanceOf[org.apache.avro.generic.GenericData.Array[Any]])
+      case _ => None
+    }
+
+    def describe:String = "org.apache.avro.generic.GernicData.Array[Any]"
   }
 
 }
