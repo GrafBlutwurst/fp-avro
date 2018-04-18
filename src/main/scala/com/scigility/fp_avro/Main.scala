@@ -59,6 +59,12 @@ object Main{
     println(s"cata schema: $schemaC")
 
     assert(schemaC.equals(schema))
+
+    val recC = out.right.get.cata(AvroAlgebra.avroValueToGenericRepr[Fix])
+    println(s"orig rec: $deserializedGenRec")
+    println(s"cata rec: $recC")
+    assert(recC.equals(deserializedGenRec))
+
   }
 
 }

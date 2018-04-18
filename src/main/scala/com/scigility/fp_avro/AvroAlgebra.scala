@@ -366,7 +366,10 @@ object AvroAlgebra {
 
 
   //FIXME: what about aliases?
-  def avroTypeToSchema:Algebra[AvroType, Schema] = (avroType:AvroType[Schema]) => avroType match {
+  /**
+    * This Algebra allows to fold a AvroType back down to a schema. not that a hylomorphism with avroSchemaToInternalType should yield the same schema again
+  **/
+  val avroTypeToSchema:Algebra[AvroType, Schema] = (avroType:AvroType[Schema]) => avroType match {
     case AvroNullType() => Schema.create(Schema.Type.NULL)
     case AvroBooleanType() => Schema.create(Schema.Type.BOOLEAN)
     case AvroIntType() => Schema.create(Schema.Type.INT)
@@ -398,6 +401,24 @@ object AvroAlgebra {
     case map:AvroMapType[Schema] => Schema.createMap(map.values)
     case unionT:AvroUnionType[Schema] => Schema.createUnion(unionT.members.asJava)
     case fixed:AvroFixedType[_] => Schema.createFixed(fixed.name, fixed.doc.getOrElse(null), fixed.namespace, fixed.length)
+  }
+
+
+  def avroValueToGenericRepr[F[_[_]]](implicit birec:Birecursive.Aux[F[AvroType], AvroType]):Algebra[AvroValue[F[AvroType], ?], Any] = (avroValue:AvroValue[F[AvroType],Any]) => avroValue match {
+    case AvroNullValue(_) => null
+    case AvroBooleanValue(_, b) => b
+    case AvroIntValue(_, i) => i
+    case AvroLongValue(_, l) => l
+    case AvroFloatValue(_ , f) => f
+    case AvroDoubleValue(_, d) => d
+    case AvroBytesValue(_ , bs) => bs.toArray
+    case AvroStringValue(_, s) => new org.apache.avro.util.Utf8(s)
+    case AvroRecordValue(schema, flds) => flds.foldLeft(new GenericData.Record(birec.cata(birec.embed(schema))(avroTypeToSchema)))( (rec, fld) => {rec.put(fld._1, fld._2); rec})
+    case AvroEnumValue(schema, symbol) => new GenericData.EnumSymbol(birec.cata(birec.embed(schema))(avroTypeToSchema), symbol)
+    case AvroArrayValue(schema, items) => new GenericData.Array(birec.cata(birec.embed(schema))(avroTypeToSchema), items.asJava)
+    case AvroMapValue(_, values) =>  values.asJava
+    case AvroUnionValue(_, member) => member
+    case AvroFixedValue(schema, bytes) => new GenericData.Fixed(birec.cata(birec.embed(schema))(avroTypeToSchema), bytes.toArray)
   }
   
 
