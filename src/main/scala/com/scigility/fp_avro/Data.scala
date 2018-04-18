@@ -71,7 +71,7 @@ object Data{
   final case class AvroArrayType[A](items:A) extends AvroComplexType[A]
   final case class AvroMapType[A](values:A) extends AvroComplexType[A]
   final case class AvroUnionType[A](members:List[A] /*Refined AvroValidUnion*/) extends AvroComplexType[A]
-  final case class AvroFixedType[A](namespace: String, name:String, aliases:Option[Set[String]], length:Int) extends AvroComplexType[A]
+  final case class AvroFixedType[A](namespace: String, name:String, doc:Option[String], aliases:Option[Set[String]], length:Int) extends AvroComplexType[A]
 
 
   final case class AvroRecordFieldMetaData(name:String, doc:Option[String], default:Option[String], order:Option[AvroRecordSortOrder], aliases:Option[Set[String]]) //FIXME: default should somehow have something to do with the Avro type? does Default work for complex types? e.g. a field that is itself a records? if so how is it represented? JSON encoding? In schema it's a JSON Node. Evaluating that might require the recursive Datatype for instances we still have to do

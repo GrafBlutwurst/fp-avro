@@ -53,6 +53,12 @@ object Main{
     val out = pair.anaM[Fix[AvroValue[Fix[AvroType], ?]]](alg)
     println(out)
 
+    val schemaC = schemaInternal.cata(AvroAlgebra.avroTypeToSchema)
+
+    println(s"orig schema: $schema")
+    println(s"cata schema: $schemaC")
+
+    assert(schemaC.equals(schema))
   }
 
 }
