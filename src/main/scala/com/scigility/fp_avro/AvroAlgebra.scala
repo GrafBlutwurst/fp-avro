@@ -4,7 +4,7 @@ package fp_avro
 
 
 import matryoshka._
-import org.apache.avro.{ Schema, SchemaBuilder }
+import org.apache.avro.{ Schema }
 import org.apache.avro.Schema.Type
 import org.apache.avro.Schema.Field.Order
 import org.apache.avro.Schema.Field
@@ -404,6 +404,9 @@ object AvroAlgebra {
   }
 
 
+  /**
+    * This is the algebra to fold the AvroValue back down to the generic representation which should be writable by Avoros serializers. note that Any is going to be dependent what kind avroValue you pass in.
+  **/
   def avroValueToGenericRepr[F[_[_]]](implicit birec:Birecursive.Aux[F[AvroType], AvroType]):Algebra[AvroValue[F[AvroType], ?], Any] = (avroValue:AvroValue[F[AvroType],Any]) => avroValue match {
     case AvroNullValue(_) => null
     case AvroBooleanValue(_, b) => b

@@ -6,7 +6,7 @@ Working with Avro in a schema driven way in Scala has been quite a pain so far. 
 The goal of fp-avro is to provide a principled and pure FP alternative to this using Recursion Schemes.
 
 # Try it out!
-Examples in src/main/tut
+You can see a mini example in the [Main.scala](src/main/scala/com/scigility/fp_avro/Main.scala)
 
 # When to use
 TODO
