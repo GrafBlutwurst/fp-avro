@@ -2,9 +2,12 @@ package com
 package scigility
 package fp_avro
 
-/*import eu.timepit.refined.api.Refined
-import eu.timepit.refined.api.Validate*/
-import scala.collection.immutable.ListMap
+import eu.timepit.refined._
+import eu.timepit.refined.numeric._
+import eu.timepit.refined.api.Refined
+import eu.timepit.refined.api.Validate
+import eu.timepit.refined.string._
+import scala.collection.immutable.{ ListMap, ListSet }
 /*import matryoshka._
 import implicits._*/
 
@@ -54,6 +57,21 @@ object Data{
 
   //Avro Types required to represent Schemata
   //TODO: extend with logical types and arbitraty properties
+
+
+  type AvroValidName = MatchesRegex[W.`"[A-Za-z_][A-Za-z0-9_]*"`.T]
+
+  final case class AvroValidNamespace()
+  implicit val validateNamespace: Validate.Plain[String, AvroValidNamespace] =
+    Validate.fromPredicate(
+      s => {
+        s.split("\\.").forall(_.matches("[A-Za-z_][A-Za-z0-9_]*")) && !s.startsWith(".") && !s.endsWith(".")
+      },
+      s => s"$s is a valid namespace", 
+      AvroValidNamespace()
+    )
+
+
   sealed trait AvroType[A]
 
   sealed trait AvroPrimitiveType[A] extends AvroType[A]
@@ -68,12 +86,12 @@ object Data{
 
 
   sealed trait AvroComplexType[A] extends AvroType[A]
-  final case class AvroRecordType[A](namespace:String, name:String, doc:Option[String], aliases:Option[Set[String]], fields:ListMap[AvroRecordFieldMetaData, A]) extends AvroComplexType[A]
-  final case class AvroEnumType[A](namespace:String, name:String, doc:Option[String], aliases:Option[Set[String]], symbols:List[String]) extends AvroComplexType[A]
+  final case class AvroRecordType[A](namespace:String Refined AvroValidNamespace, name:String Refined AvroValidName, doc:Option[String], aliases:Option[Set[String]], fields:ListMap[AvroRecordFieldMetaData, A]) extends AvroComplexType[A]
+  final case class AvroEnumType[A](namespace:String Refined AvroValidNamespace, name:String Refined AvroValidName, doc:Option[String], aliases:Option[Set[String]], symbols:ListSet[String Refined AvroValidName]) extends AvroComplexType[A]
   final case class AvroArrayType[A](items:A) extends AvroComplexType[A]
   final case class AvroMapType[A](values:A) extends AvroComplexType[A]
   final case class AvroUnionType[A](members:List[A]) extends AvroComplexType[A]
-  final case class AvroFixedType[A](namespace: String, name:String, doc:Option[String], aliases:Option[Set[String]], length:Int) extends AvroComplexType[A]
+  final case class AvroFixedType[A](namespace: String Refined AvroValidNamespace, name:String Refined AvroValidName, doc:Option[String], aliases:Option[Set[String]], length:Int Refined Positive) extends AvroComplexType[A]
 
 
   final case class AvroRecordFieldMetaData(name:String, doc:Option[String], default:Option[String], order:Option[AvroRecordSortOrder], aliases:Option[Set[String]]) //FIXME: default should somehow have something to do with the Avro type? does Default work for complex types? e.g. a field that is itself a records? if so how is it represented? JSON encoding? In schema it's a JSON Node. Evaluating that might require the recursive Datatype for instances we still have to do

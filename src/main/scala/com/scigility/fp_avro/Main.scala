@@ -22,7 +22,7 @@ object Main{
     val schemaString = """{"type": "record","namespace": "com.example","name": "FullName","fields": [{ "name": "first", "type": "string" }, { "name": "last", "type": "string" }, {"name": "uniontest", "type": ["null","string","int"]}]} """
     val schema:Schema = (new Schema.Parser).parse(schemaString)
     //unfold a schema
-    val schemaInternal = schema.ana[Fix[AvroType]](AvroAlgebra.avroSchemaToInternalType)
+    val schemaInternal = schema.anaM[Fix[AvroType]](AvroAlgebra.avroSchemaToInternalType)
 
     println(schemaInternal)
 
@@ -46,14 +46,14 @@ object Main{
     val deserializedGenRec = datafileReader.next
 
     //unfold a record
-    val pair:(Fix[AvroType], Any) = (schemaInternal, deserializedGenRec)
+    val pair:(Fix[AvroType], Any) = (schemaInternal.right.get, deserializedGenRec)
     val alg = AvroAlgebra.avroGenericReprToInternal[Fix]
 
     val out = pair.anaM[Fix[AvroValue[Fix[AvroType], ?]]](alg)
     println(out)
 
     //fold down the schema again
-    val schemaC = schemaInternal.cata(AvroAlgebra.avroTypeToSchema)
+    val schemaC = schemaInternal.map(_.cataM(AvroAlgebra.avroTypeToSchema))
 
     println(s"orig schema: $schema")
     println(s"cata schema: $schemaC")
@@ -66,7 +66,7 @@ object Main{
     println(s"cata rec: $recC")
     assert(recC.equals(deserializedGenRec)) //this should equal the original record
     
-
+    
   }
 
 }

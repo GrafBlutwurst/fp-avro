@@ -3,7 +3,6 @@ package scigility
 package fp_avro
 
 import scala.collection.immutable.ListMap
-import scalaz.Functor
 import scalaz.Applicative
 import scalaz.Traverse
 import Data._
@@ -13,26 +12,30 @@ import shapeless.Typeable
 import scala.collection.JavaConverters._
 
 object implicits {
-  //FIXME: change to traverse
-  implicit val avroTypeFunctor:Functor[AvroType] = new Functor[AvroType] {
-    override def map[A,B](fa:AvroType[A])(f:A => B):AvroType[B] = fa match {
-      case _:AvroNullType[A] => AvroNullType[B]
-      case _:AvroBooleanType[A] => AvroBooleanType[B]
-      case _:AvroIntType[A] => AvroIntType[B]
-      case _:AvroLongType[A] => AvroLongType[B]
-      case _:AvroFloatType[A] => AvroFloatType[B]
-      case _:AvroDoubleType[A] => AvroDoubleType[B]
-      case _:AvroBytesType[A] => AvroBytesType[B]
-      case _:AvroStringType[A] => AvroStringType[B]
-      case rec:AvroRecordType[A] => {
-        val newFields:ListMap[AvroRecordFieldMetaData, B] = rec.fields.map(fld => fld._1 -> f(fld._2))
-        rec.copy[B](fields = newFields)
+
+
+  implicit val avroTypeTraverse:Traverse[AvroType] = new Traverse[AvroType] {
+    override def traverseImpl[G[_]:Applicative,A,B](fa:AvroType[A])(f:A => G[B]):G[AvroType[B]] = {
+      val applicativeG = Applicative[G]
+      fa match {
+        case _:AvroNullType[A] => applicativeG.pure(AvroNullType[B])
+        case _:AvroBooleanType[A] => applicativeG.pure(AvroBooleanType[B])
+        case _:AvroIntType[A] => applicativeG.pure(AvroIntType[B])
+        case _:AvroLongType[A] => applicativeG.pure(AvroLongType[B])
+        case _:AvroFloatType[A] => applicativeG.pure(AvroFloatType[B])
+        case _:AvroDoubleType[A] => applicativeG.pure(AvroDoubleType[B])
+        case _:AvroBytesType[A] => applicativeG.pure(AvroBytesType[B])
+        case _:AvroStringType[A] => applicativeG.pure(AvroStringType[B])
+        case rec:AvroRecordType[A] => {
+          val newFields:G[ListMap[AvroRecordFieldMetaData, B]] = Traverse[ListMap[AvroRecordFieldMetaData, ?]].traverse(rec.fields)(f)
+          applicativeG.map(newFields)(flds => rec.copy[B](fields = flds))
+        }
+        case enum:AvroEnumType[A] => applicativeG.pure(enum.copy[B]())
+        case AvroArrayType(items) => applicativeG.map(f(items))(AvroArrayType[B](_))
+        case AvroMapType(values) => applicativeG.map(f(values))(AvroMapType[B](_))
+        case AvroUnionType(members) => Traverse[List].traverse(members)(f).map(AvroUnionType[B](_))
+        case fixed:AvroFixedType[A] => applicativeG.pure(fixed.copy[B]())
       }
-      case enum:AvroEnumType[A] => enum.copy[B]()
-      case AvroArrayType(items) => AvroArrayType[B](f(items))
-      case AvroMapType(values) => AvroMapType[B](f(values))
-      case AvroUnionType(members) => AvroUnionType[B](members.map(f))
-      case fixed:AvroFixedType[A] => fixed.copy[B]()
     }
   }
 

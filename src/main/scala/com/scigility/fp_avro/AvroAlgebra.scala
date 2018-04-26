@@ -12,7 +12,7 @@ import org.apache.avro.generic.GenericData
 import Data._
 import org.apache.avro.generic._
 import scala.collection.JavaConverters._
-import scala.collection.immutable.ListMap
+import scala.collection.immutable.{ ListMap, ListSet }
 import implicits._
 import scala.reflect.runtime.universe._
 import scalaz._
@@ -20,8 +20,11 @@ import Scalaz._
 import syntax.traverse._
 import shapeless.Typeable
 import shapeless.Typeable._
-/*import eu.timepit.refined._
-import eu.timepit.refined.auto._*/
+import eu.timepit.refined._
+import eu.timepit.refined.api.Refined
+import eu.timepit.refined.auto._
+import eu.timepit.refined.numeric._
+import scala.util.Try
 /**
   *  This is a collection of Algebras to use with FP-Avro:
   *  e.g. to get from a schema to an internal representation
@@ -34,23 +37,23 @@ object AvroAlgebra {
     * e.g. schema.ana[Fix[AvroType]](AvroAlgebra.avroSchemaToInternalType)
     * 
   **/
-  val avroSchemaToInternalType:Coalgebra[AvroType, Schema] = (schema:Schema) => schema.getType match {
-    case Type.NULL => AvroNullType()
-    case Type.BOOLEAN => AvroBooleanType()
-    case Type.INT => AvroIntType()
-    case Type.LONG => AvroLongType()
-    case Type.FLOAT => AvroFloatType()
-    case Type.DOUBLE => AvroDoubleType()
-    case Type.BYTES => AvroBytesType()
-    case Type.STRING => AvroStringType()
+  val avroSchemaToInternalType:CoalgebraM[Either[String,?], AvroType, Schema] = (schema:Schema) => schema.getType match {
+    case Type.NULL => Right(AvroNullType())
+    case Type.BOOLEAN => Right(AvroBooleanType())
+    case Type.INT => Right(AvroIntType())
+    case Type.LONG => Right(AvroLongType())
+    case Type.FLOAT => Right(AvroFloatType())
+    case Type.DOUBLE => Right(AvroDoubleType())
+    case Type.BYTES => Right(AvroBytesType())
+    case Type.STRING => Right(AvroStringType())
     case Type.RECORD => {
-      val nameSpace = schema.getNamespace
-      val name = schema.getName
+      val nameSpaceS = schema.getNamespace
+      val nameS = schema.getName
       val doc = Option(schema.getDoc)
       val aliases = Option(schema.getAliases).map(_.asScala.toSet)
-      val fields = schema.getFields.asScala.toList.map(
+      val fieldsE = Traverse[List].traverse(schema.getFields.asScala.toList)(
         (fld:Field) => {
-          val fldName =  fld.name
+          val fldNameS =  fld.name
           val fldDoc = Option(fld.doc)
           val fldDefultExpr = None //FIXME: Evaulate Json node to value. Gotta figure out how to type the default value
           val fldAlias = Option(fld.aliases()).map(_.asScala.toSet)
@@ -59,19 +62,36 @@ object AvroAlgebra {
             case Order.DESCENDING => ARSODescending
             case Order.IGNORE => ARSOIgnore
           }
-          AvroRecordFieldMetaData(fldName, fldDoc, fldDefultExpr, fldSortOrder, fldAlias) -> fld.schema
+
+          refineV[AvroValidName](fldNameS).map( fldName => AvroRecordFieldMetaData(fldName, fldDoc, fldDefultExpr, fldSortOrder, fldAlias) -> fld.schema)
         }
-      ).foldLeft(ListMap.empty[AvroRecordFieldMetaData, Schema]) (
-        (map, elem) => map + elem
+      ).map(
+        _.foldLeft(ListMap.empty[AvroRecordFieldMetaData, Schema]) (
+          (map, elem) => map + elem
+        )
       )
-      AvroRecordType(nameSpace, name, doc, aliases, fields)
+      
+      for {
+        nameSpace <- refineV[AvroValidNamespace](nameSpaceS)
+        name <- refineV[AvroValidName](nameS)
+        fields <- fieldsE
+      } yield AvroRecordType(nameSpace, name, doc, aliases, fields)
     }
 
-    case Type.ENUM => AvroEnumType(schema.getNamespace, schema.getName, Option(schema.getDoc), Option(schema.getAliases).map(_.asScala.toSet), schema.getEnumSymbols.asScala.toList)
-    case Type.ARRAY => AvroArrayType(schema.getElementType)
-    case Type.MAP => AvroMapType(schema.getValueType)
-    case Type.UNION => AvroUnionType(schema.getTypes.asScala.toList)
-    case Type.FIXED => AvroFixedType(schema.getNamespace, schema.getName, Option(schema.getDoc), Option(schema.getAliases).map(_.asScala.toSet), schema.getFixedSize) 
+    case Type.ENUM => for {
+      nameSpace <- refineV[AvroValidNamespace](schema.getNamespace)
+      name <- refineV[AvroValidName](schema.getName)
+      symbolsL <- Traverse[List].traverse(schema.getEnumSymbols.asScala.toList)(refineV[AvroValidName](_))
+      symbols = symbolsL.foldLeft(ListSet.empty[String Refined AvroValidName])(_ + _)
+    } yield AvroEnumType(nameSpace, name, Option(schema.getDoc), Option(schema.getAliases).map(_.asScala.toSet), symbols)
+    case Type.ARRAY => Right(AvroArrayType(schema.getElementType))
+    case Type.MAP => Right(AvroMapType(schema.getValueType))
+    case Type.UNION => Right(AvroUnionType(schema.getTypes.asScala.toList))
+    case Type.FIXED => for {
+      nameSpace <- refineV[AvroValidNamespace](schema.getNamespace)
+      name <- refineV[AvroValidName](schema.getName)
+      length <- refineV[Positive](schema.getFixedSize)
+    } yield AvroFixedType(nameSpace, name, Option(schema.getDoc), Option(schema.getAliases).map(_.asScala.toSet), length) 
   }
 
  //FIXME: Requires refactor pass (error reporting, think if we can streamline the reverse union matching )
@@ -371,15 +391,15 @@ object AvroAlgebra {
   /**
     * This Algebra allows to fold a AvroType back down to a schema. not that a hylomorphism with avroSchemaToInternalType should yield the same schema again
   **/
-  val avroTypeToSchema:Algebra[AvroType, Schema] = (avroType:AvroType[Schema]) => avroType match {
-    case AvroNullType() => Schema.create(Schema.Type.NULL)
-    case AvroBooleanType() => Schema.create(Schema.Type.BOOLEAN)
-    case AvroIntType() => Schema.create(Schema.Type.INT)
-    case AvroLongType() => Schema.create(Schema.Type.LONG)
-    case AvroFloatType() => Schema.create(Schema.Type.FLOAT)
-    case AvroDoubleType() => Schema.create(Schema.Type.DOUBLE)
-    case AvroBytesType() => Schema.create(Schema.Type.BYTES)
-    case AvroStringType() => Schema.create(Schema.Type.STRING)
+  val avroTypeToSchema:AlgebraM[Either[String,?],AvroType, Schema] = (avroType:AvroType[Schema]) => avroType match {
+    case AvroNullType() => Right(Schema.create(Schema.Type.NULL))
+    case AvroBooleanType() => Right(Schema.create(Schema.Type.BOOLEAN))
+    case AvroIntType() => Right(Schema.create(Schema.Type.INT))
+    case AvroLongType() => Right(Schema.create(Schema.Type.LONG))
+    case AvroFloatType() => Right(Schema.create(Schema.Type.FLOAT))
+    case AvroDoubleType() => Right(Schema.create(Schema.Type.DOUBLE))
+    case AvroBytesType() => Right(Schema.create(Schema.Type.BYTES))
+    case AvroStringType() => Right(Schema.create(Schema.Type.STRING))
     case rec:AvroRecordType[Schema] => {
       val flds = rec.fields.foldRight(List.empty[Schema.Field]) (
         (elemKv, lst) => {
@@ -396,34 +416,50 @@ object AvroAlgebra {
         }
       )
 
-      Schema.createRecord(rec.name, rec.doc.getOrElse(null), rec.namespace, false, flds.asJava)
+      Try { Schema.createRecord(rec.name, rec.doc.getOrElse(null), rec.namespace, false, flds.asJava) }.toEither.left.map(_.getMessage)
+      
     }
-    case enum:AvroEnumType[_] => Schema.createEnum(enum.namespace, enum.name, enum.doc.getOrElse(null), enum.symbols.asJava)
-    case arr:AvroArrayType[Schema] => Schema.createArray(arr.items)
-    case map:AvroMapType[Schema] => Schema.createMap(map.values)
-    case unionT:AvroUnionType[Schema] => Schema.createUnion(unionT.members.asJava)
-    case fixed:AvroFixedType[_] => Schema.createFixed(fixed.name, fixed.doc.getOrElse(null), fixed.namespace, fixed.length)
+    case enum:AvroEnumType[_] => {
+      Try { Schema.createEnum(enum.namespace, enum.name, enum.doc.getOrElse(null), enum.symbols.toList.map(_.value).asJava) }.toEither.left.map(_.getMessage)
+    }
+    case arr:AvroArrayType[Schema] => Right(Schema.createArray(arr.items))
+    case map:AvroMapType[Schema] => Right(Schema.createMap(map.values))
+    case unionT:AvroUnionType[Schema] => Right(Schema.createUnion(unionT.members.asJava))
+    case fixed:AvroFixedType[_] => Try{ Schema.createFixed(fixed.name, fixed.doc.getOrElse(null), fixed.namespace, fixed.length.value) }.toEither.left.map(_.getMessage)
   }
 
 
   /**
     * This is the algebra to fold the AvroValue back down to the generic representation which should be writable by Avoros serializers. note that Any is going to be dependent what kind avroValue you pass in.
   **/
-  def avroValueToGenericRepr[F[_[_]]](implicit birec:Birecursive.Aux[F[AvroType], AvroType]):Algebra[AvroValue[F[AvroType], ?], Any] = (avroValue:AvroValue[F[AvroType],Any]) => avroValue match {
-    case AvroNullValue(_) => null
-    case AvroBooleanValue(_, b) => b
-    case AvroIntValue(_, i) => i
-    case AvroLongValue(_, l) => l
-    case AvroFloatValue(_ , f) => f
-    case AvroDoubleValue(_, d) => d
-    case AvroBytesValue(_ , bs) => bs.toArray
-    case AvroStringValue(_, s) => new org.apache.avro.util.Utf8(s)
-    case AvroRecordValue(schema, flds) => flds.foldLeft(new GenericData.Record(birec.cata(birec.embed(schema))(avroTypeToSchema)))( (rec, fld) => {rec.put(fld._1, fld._2); rec})
-    case AvroEnumValue(schema, symbol) => new GenericData.EnumSymbol(birec.cata(birec.embed(schema))(avroTypeToSchema), symbol)
-    case AvroArrayValue(schema, items) => new GenericData.Array(birec.cata(birec.embed(schema))(avroTypeToSchema), items.asJava)
-    case AvroMapValue(_, values) =>  values.asJava
-    case AvroUnionValue(_, member) => member
-    case AvroFixedValue(schema, bytes) => new GenericData.Fixed(birec.cata(birec.embed(schema))(avroTypeToSchema), bytes.toArray)
+  def avroValueToGenericRepr[F[_[_]]](implicit birec:Birecursive.Aux[F[AvroType], AvroType]):AlgebraM[Either[String,?], AvroValue[F[AvroType], ?], Any] = (avroValue:AvroValue[F[AvroType],Any]) => avroValue match {
+    case AvroNullValue(_) => Right(null)
+    case AvroBooleanValue(_, b) => Right(b)
+    case AvroIntValue(_, i) => Right(i)
+    case AvroLongValue(_, l) => Right(l)
+    case AvroFloatValue(_ , f) => Right(f)
+    case AvroDoubleValue(_, d) => Right(d)
+    case AvroBytesValue(_ , bs) => Right(bs.toArray)
+    case AvroStringValue(_, s) => Try { new org.apache.avro.util.Utf8(s) }.toEither.left.map(_.getMessage)
+    case AvroRecordValue(schema, flds) => for {
+      avroSchema <- birec.cataM(birec.embed(schema))(avroTypeToSchema)
+      genRec <- Try { new GenericData.Record(avroSchema) }.toEither.left.map(_.getMessage)
+    } yield flds.foldLeft(genRec)( (rec, fld) => {rec.put(fld._1, fld._2); rec})
+    case AvroEnumValue(schema, symbol) => for {
+      avroSchema <- birec.cataM(birec.embed(schema))(avroTypeToSchema)
+      genEnum <- Try { new GenericData.EnumSymbol(avroSchema, symbol) }.toEither.left.map(_.getMessage)
+    } yield genEnum
+      //new GenericData.Array(birec.cata(birec.embed(schema))(avroTypeToSchema), items.asJava)
+    case AvroArrayValue(schema, items) => for {
+      avroSchema <- birec.cataM(birec.embed(schema))(avroTypeToSchema)
+      genArray <- Try { new GenericData.Array(avroSchema, items.asJava) }.toEither.left.map(_.getMessage)
+    } yield genArray
+    case AvroMapValue(_, values) =>  Right(values.asJava)
+    case AvroUnionValue(_, member) => Right(member)
+    case AvroFixedValue(schema, bytes) => for {
+      avroSchema <- birec.cataM(birec.embed(schema))(avroTypeToSchema)
+      genArray <- Try { new GenericData.Fixed(avroSchema, bytes.toArray) }.toEither.left.map(_.getMessage)
+    } yield genArray
   }
   
 

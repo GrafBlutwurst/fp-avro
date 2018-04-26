@@ -43,7 +43,8 @@ libraryDependencies ++= Seq(
 
 //test Dependencies
 libraryDependencies ++= Seq(
-  "org.scalacheck" %% "scalacheck" % "1.14.0"
+  "org.scalacheck" %% "scalacheck"         % "1.14.0",
+  "eu.timepit"     %% "refined-scalacheck" % "0.9.0"
 ).map( _ %  "test" )
 
 //Java Dependencies
