@@ -20,6 +20,8 @@ import Scalaz._
 import syntax.traverse._
 import shapeless.Typeable
 import shapeless.Typeable._
+/*import eu.timepit.refined._
+import eu.timepit.refined.auto._*/
 /**
   *  This is a collection of Algebras to use with FP-Avro:
   *  e.g. to get from a schema to an internal representation
@@ -52,7 +54,7 @@ object AvroAlgebra {
           val fldDoc = Option(fld.doc)
           val fldDefultExpr = None //FIXME: Evaulate Json node to value. Gotta figure out how to type the default value
           val fldAlias = Option(fld.aliases()).map(_.asScala.toSet)
-          val fldSortOrder = Option(fld.order()).map {
+          val fldSortOrder = Option(fld.order()).map[AvroRecordSortOrder] {
             case Order.ASCENDING => ARSOAscending
             case Order.DESCENDING => ARSODescending
             case Order.IGNORE => ARSOIgnore

@@ -5,6 +5,8 @@ package fp_avro
 /*import eu.timepit.refined.api.Refined
 import eu.timepit.refined.api.Validate*/
 import scala.collection.immutable.ListMap
+/*import matryoshka._
+import implicits._*/
 
 object Data{
 
@@ -15,31 +17,31 @@ object Data{
     * This makes sure that a List of AvroTypes actually forms a valid Union as defined in
     *  https://avro.apache.org/docs/1.8.1/spec.html#Unions
   **/
-  //FIXME: Move this to a DSL when we get to the schema builder
-  /*implicit val validateUnionMembers: Validate.Plain[List[AvroType], AvroValidUnion] = 
+ /* implicit def validateUnionMembers[F[_[_]]](implicit birec:Birecursive.Aux[F[AvroType], AvroType]): Validate.Plain[List[F[AvroType]], AvroValidUnion] = //TODO: Figure out how to apply this
     Validate.fromPredicate(
-      lst =>{ 
-        lst.filter{ case AvroUnion(_) => true }.length == 0 && // avro unions may not contain any other unions directly
+      lstF =>{
+        val lst = lstF.map(birec.project(_))
+        lst.filter{ case AvroUnionType(_) => true }.length == 0 && // avro unions may not contain any other unions directly
         lst.map{ 
-          case AvroNull => 1
-          case AvroBoolean => 2
-          case AvroInt => 3
-          case AvroLong => 4
-          case AvroFloat => 5
-          case AvroDouble => 6
-          case AvroBytes => 7
-          case AvroString => 8
-          case _: AvroMap => 9
-          case _: AvroArray => 10
+          case AvroNullType() => 1
+          case AvroBooleanType() => 2
+          case AvroIntType() => 3
+          case AvroLongType() => 4
+          case AvroFloatType() => 5
+          case AvroDoubleType() => 6
+          case AvroBytesType() => 7
+          case AvroStringType() => 8
+          case _: AvroMapType[_] => 9
+          case _: AvroArrayType[_] => 10
           case _ => 0
         }
           .filter( _> 0)
           .groupBy(identity)
           .forall(_._2.length == 1) && // make sure there are no non-named avro typed double in the union
         lst.map{ 
-          case rec: AvroRecord => (rec.namespace, rec.name)
-          case enum: AvroEnum => (enum.namespace, enum.name)
-          case fixed:AvroFixed => (fixed.namespace, fixed.name)
+          case rec: AvroRecordType[_] => (rec.namespace, rec.name)
+          case enum: AvroEnumType[_] => (enum.namespace, enum.name)
+          case fixed:AvroFixedType[_] => (fixed.namespace, fixed.name)
           case _ => ("", "")
         }
           .filter( tp => tp._1 != "" && tp._2 != "")
@@ -70,7 +72,7 @@ object Data{
   final case class AvroEnumType[A](namespace:String, name:String, doc:Option[String], aliases:Option[Set[String]], symbols:List[String]) extends AvroComplexType[A]
   final case class AvroArrayType[A](items:A) extends AvroComplexType[A]
   final case class AvroMapType[A](values:A) extends AvroComplexType[A]
-  final case class AvroUnionType[A](members:List[A] /*Refined AvroValidUnion*/) extends AvroComplexType[A]
+  final case class AvroUnionType[A](members:List[A]) extends AvroComplexType[A]
   final case class AvroFixedType[A](namespace: String, name:String, doc:Option[String], aliases:Option[Set[String]], length:Int) extends AvroComplexType[A]
 
 
