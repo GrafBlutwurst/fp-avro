@@ -3,6 +3,7 @@ package scigility
 package fp_avro
 
 
+import eu.timepit.refined.api.Validate
 import matryoshka._
 import org.apache.avro.{ Schema }
 import org.apache.avro.Schema.Type
@@ -24,6 +25,7 @@ import eu.timepit.refined._
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric._
+import eu.timepit.refined.collection._
 import scala.util.Try
 /**
   *  This is a collection of Algebras to use with FP-Avro:
@@ -31,6 +33,28 @@ import scala.util.Try
 **/
 //BUG: will crash if used on in-code generated GenericRecord. I suspect that the change from String to avro.util.UTF8 happens during serialization. Will have to build in some sort of runtime type mappings
 object AvroAlgebra {
+
+
+  //FIXME: This needs a rewrite. ListSet and Set need to be sorted out see toList.toSet to get to a proper Set rather than a ListSet. but Set has no Traversable instance, consider just using ListSet
+  private[this] def handleAvroAliasesJavaSet[P, A](jSetO: java.util.Set[A])(implicit validateEv:Validate[A,P]): Either[String, OptionalNonEmptySet[A Refined P]] = {
+    val inverse = Option(jSetO).flatMap(
+      jset => {
+        val scalaLSet = jset.asScala.toList.foldLeft(ListSet.empty[A])(_+_)
+        val validatedSetE:Either[String, Set[A Refined P]] = Traverse[ListSet].traverse(scalaLSet)(refineV[P](_))
+        val optValSet:Either[String, Option[Set[A Refined P] Refined NonEmpty]] = validatedSetE.map(
+            possiblyEmptySet => refineV[NonEmpty](possiblyEmptySet.toList.toSet) match {
+              case Left(_) => None
+              case Right(set) => Some(set)
+            }
+          )
+        Traverse[Either[String, ?]].sequence(optValSet)
+      }
+    )
+    
+    Traverse[Option].sequence(inverse)
+        
+  }
+
 
   /**
     * This Coalgebra lets you unfold a org.apache.avro.Schema instance into the recursive AvroType Datastructure. This is needed to later unfold value types into the AvroValue Structure
@@ -50,20 +74,25 @@ object AvroAlgebra {
       val nameSpaceS = schema.getNamespace
       val nameS = schema.getName
       val doc = Option(schema.getDoc)
-      val aliases = Option(schema.getAliases).map(_.asScala.toSet)
+
+   
       val fieldsE = Traverse[List].traverse(schema.getFields.asScala.toList)(
         (fld:Field) => {
           val fldNameS =  fld.name
           val fldDoc = Option(fld.doc)
           val fldDefultExpr = None //FIXME: Evaulate Json node to value. Gotta figure out how to type the default value
-          val fldAlias = Option(fld.aliases()).map(_.asScala.toSet)
           val fldSortOrder = Option(fld.order()).map[AvroRecordSortOrder] {
             case Order.ASCENDING => ARSOAscending
             case Order.DESCENDING => ARSODescending
             case Order.IGNORE => ARSOIgnore
           }
 
-          refineV[AvroValidName](fldNameS).map( fldName => AvroRecordFieldMetaData(fldName, fldDoc, fldDefultExpr, fldSortOrder, fldAlias) -> fld.schema)
+          for {
+            fldName <- refineV[AvroValidName](fldNameS)
+            fldAlias <- handleAvroAliasesJavaSet[AvroValidName, String](fld.aliases)
+          } yield  AvroRecordFieldMetaData(fldName, fldDoc, fldDefultExpr, fldSortOrder, fldAlias) -> fld.schema
+
+
         }
       ).map(
         _.foldLeft(ListMap.empty[AvroRecordFieldMetaData, Schema]) (
@@ -75,6 +104,7 @@ object AvroAlgebra {
         nameSpace <- refineV[AvroValidNamespace](nameSpaceS)
         name <- refineV[AvroValidName](nameS)
         fields <- fieldsE
+        aliases <- handleAvroAliasesJavaSet[AvroValidNamespace, String](schema.getAliases)
       } yield AvroRecordType(nameSpace, name, doc, aliases, fields)
     }
 
@@ -83,7 +113,8 @@ object AvroAlgebra {
       name <- refineV[AvroValidName](schema.getName)
       symbolsL <- Traverse[List].traverse(schema.getEnumSymbols.asScala.toList)(refineV[AvroValidName](_))
       symbols = symbolsL.foldLeft(ListSet.empty[String Refined AvroValidName])(_ + _)
-    } yield AvroEnumType(nameSpace, name, Option(schema.getDoc), Option(schema.getAliases).map(_.asScala.toSet), symbols)
+      aliases <- handleAvroAliasesJavaSet[AvroValidNamespace, String](schema.getAliases)
+    } yield AvroEnumType(nameSpace, name, Option(schema.getDoc), aliases, symbols)
     case Type.ARRAY => Right(AvroArrayType(schema.getElementType))
     case Type.MAP => Right(AvroMapType(schema.getValueType))
     case Type.UNION => Right(AvroUnionType(schema.getTypes.asScala.toList))
@@ -91,7 +122,8 @@ object AvroAlgebra {
       nameSpace <- refineV[AvroValidNamespace](schema.getNamespace)
       name <- refineV[AvroValidName](schema.getName)
       length <- refineV[Positive](schema.getFixedSize)
-    } yield AvroFixedType(nameSpace, name, Option(schema.getDoc), Option(schema.getAliases).map(_.asScala.toSet), length) 
+      aliases <- handleAvroAliasesJavaSet[AvroValidNamespace, String](schema.getAliases)
+    } yield AvroFixedType(nameSpace, name, Option(schema.getDoc), aliases, length) 
   }
 
  //FIXME: Requires refactor pass (error reporting, think if we can streamline the reverse union matching )
@@ -411,21 +443,42 @@ object AvroAlgebra {
             case ARSOAscending => Schema.Field.Order.ASCENDING
             case ARSODescending => Schema.Field.Order.DESCENDING
           }
-
-          new Schema.Field(elemMeta.name, elemSchema, elemMeta.doc.getOrElse(null), elemMeta.default.getOrElse(null), sortOrder.getOrElse(null)) :: lst
+          val fldInstance = new Schema.Field(elemMeta.name, elemSchema, elemMeta.doc.getOrElse(null), elemMeta.default.getOrElse(null), sortOrder.getOrElse(null))
+          elemMeta.aliases.foreach(
+            _.foreach(alias => fldInstance.addAlias(alias.value))
+          )
+          fldInstance :: lst
         }
       )
 
-      Try { Schema.createRecord(rec.name, rec.doc.getOrElse(null), rec.namespace, false, flds.asJava) }.toEither.left.map(_.getMessage)
+      Try { 
+        val schemaInstance = Schema.createRecord(rec.name, rec.doc.getOrElse(null), rec.namespace, false, flds.asJava) 
+        rec.aliases.foreach(
+          _.foreach(alias => schemaInstance.addAlias(alias.value))
+        )
+        schemaInstance
+      }.toEither.left.map(_.getMessage)
       
     }
     case enum:AvroEnumType[_] => {
-      Try { Schema.createEnum(enum.namespace, enum.name, enum.doc.getOrElse(null), enum.symbols.toList.map(_.value).asJava) }.toEither.left.map(_.getMessage)
+      Try { 
+        val schemaInstance = Schema.createEnum(enum.name, enum.doc.getOrElse(null), enum.namespace, enum.symbols.toList.map(_.value).asJava) 
+          enum.aliases.foreach(
+            _.foreach(alias => schemaInstance.addAlias(alias.value))
+          )
+        schemaInstance
+      }.toEither.left.map(_.getMessage)
     }
     case arr:AvroArrayType[Schema] => Right(Schema.createArray(arr.items))
     case map:AvroMapType[Schema] => Right(Schema.createMap(map.values))
     case unionT:AvroUnionType[Schema] => Right(Schema.createUnion(unionT.members.asJava))
-    case fixed:AvroFixedType[_] => Try{ Schema.createFixed(fixed.name, fixed.doc.getOrElse(null), fixed.namespace, fixed.length.value) }.toEither.left.map(_.getMessage)
+    case fixed:AvroFixedType[_] => Try{ 
+      val schemaInstance = Schema.createFixed(fixed.name, fixed.doc.getOrElse(null), fixed.namespace, fixed.length.value) 
+      fixed.aliases.foreach(
+        _.foreach(alias => schemaInstance.addAlias(alias.value))
+      )
+      schemaInstance
+    }.toEither.left.map(_.getMessage)
   }
 
 

@@ -19,10 +19,14 @@ import scalaz._
 import Scalaz._
 import eu.timepit.refined._
 import eu.timepit.refined.numeric._
+import eu.timepit.refined.string._
+import eu.timepit.refined.collection._
 import eu.timepit.refined.auto._
+import eu.timepit.refined.scalacheck.numeric._
+import eu.timepit.refined.scalacheck.string._
+import eu.timepit.refined.scalacheck.collection._
 
-
-object AvroAlgebraTests extends Properties("AvroType"){
+object AvroAlgebraTests extends Properties("AvroAlgebra"){
 
   val nameSpaceGen = oneOf(
     const(refineMV[AvroValidNamespace]("com.scigility")),
@@ -40,11 +44,36 @@ object AvroAlgebraTests extends Properties("AvroType"){
   )
 
 
+
+  //TODO: EEEEW figure out how to do proper inference rules 
+  def fqnGen(baseNS:String Refined AvroValidNamespace):Gen[Option[Set[String Refined AvroValidNamespace] Refined NonEmpty]] =
+    Gen.listOfN(3, nameGen).map( 
+      nameList => {
+        val asSet = nameList.map(rv => refineV[AvroValidNamespace](s"${baseNS.value}.${rv.value}").right.get).toSet
+        refineV[NonEmpty](asSet) match {
+          case Left(_) => None
+          case Right(set) => Some(set)
+        }
+      }
+    )
+
+  def nameSetGen:Gen[Option[Set[String Refined AvroValidName] Refined NonEmpty]] =
+    Gen.listOfN(3, nameGen).map( 
+      nameList => {
+        val asSet = nameList.toSet
+        refineV[NonEmpty](asSet) match {
+          case Left(_) => None
+          case Right(set) => Some(set)
+        }
+      }
+    )
+
+
   def avroRecordFieldMetaDataGen[F[_[_]]](implicit birec:Birecursive.Aux[F[AvroType], AvroType]) = for {
     name <- nameGen
     doc <- arbitrary[Option[String]]
     sortOrder <- oneOf(Some(ARSOIgnore), Some(ARSOAscending), Some(ARSODescending), Option.empty[AvroRecordSortOrder])
-    aliases <- arbitrary[Option[Set[String]]]
+    aliases <- nameSetGen
   } yield AvroRecordFieldMetaData(name, doc, Option.empty[String], sortOrder, aliases)
 
   def fldGen[F[_[_]]](depth:Int)(implicit birec:Birecursive.Aux[F[AvroType], AvroType]) = for {
@@ -57,8 +86,8 @@ object AvroAlgebraTests extends Properties("AvroType"){
     nameSpace <- nameSpaceGen
     name <- nameGen
     doc <- arbitrary[Option[String]]
-    aliases <- arbitrary[Option[Set[String]]]
-    flds <- Gen.listOfN(fldSize, fldGen(depth)).map(_.foldLeft(ListMap.empty[AvroRecordFieldMetaData,F[AvroType]])(_ + _))
+    aliases <- fqnGen(nameSpace)
+    flds <- Gen.listOfN(fldSize, fldGen(depth)).map(_.foldLeft(ListMap.empty[AvroRecordFieldMetaData,F[AvroType]])((lm, fld) => if (lm.exists(e => e._1.name == fld._1.name)) lm else lm + fld))
   } yield birec.embed(AvroRecordType(nameSpace, name, doc, aliases, flds))
 
   val enumSymbolSize = 5
@@ -66,7 +95,7 @@ object AvroAlgebraTests extends Properties("AvroType"){
     nameSpace <- nameSpaceGen
     name <- nameGen
     doc <- arbitrary[Option[String]]
-    aliases <- arbitrary[Option[Set[String]]]
+    aliases <- fqnGen(nameSpace)
     symbols <- Gen.listOfN(enumSymbolSize, nameGen).map(lst => lst.foldLeft(ListSet.empty[String Refined AvroValidName])( (ls, elem) => ls + elem))
   } yield birec.embed(AvroEnumType(nameSpace, name, doc, aliases, symbols))
 
@@ -85,7 +114,7 @@ object AvroAlgebraTests extends Properties("AvroType"){
     nameSpace <- nameSpaceGen
     name <- nameGen
     doc <- arbitrary[Option[String]]
-    aliases <- arbitrary[Option[Set[String]]]
+    aliases <- fqnGen(nameSpace)
     length <- arbitrary[Int Refined Positive]
   } yield birec.embed(AvroFixedType(nameSpace, name, doc, aliases, length))
 
@@ -124,8 +153,25 @@ object AvroAlgebraTests extends Properties("AvroType"){
 
 
   def identityProperty[F[_[_]]](implicit birec:Birecursive.Aux[F[AvroType], AvroType]) = forAll(avroTypeGen[F](0)) {
-    (t:F[AvroType]) => birec.cataM(t)(AvroAlgebra.avroTypeToSchema).flatMap(_.anaM[F[AvroType]](AvroAlgebra.avroSchemaToInternalType)).fold(s => {println(s); false}, _ == t)
+    (t:F[AvroType]) => birec.cataM(t)(AvroAlgebra.avroTypeToSchema).flatMap(_.anaM[F[AvroType]](AvroAlgebra.avroSchemaToInternalType)).fold(
+      s => {
+        println(s"error during fold or unfold: $s") 
+        false
+      }, 
+      t1 => {
+        if(t1 == t)
+          true
+        else {
+          println(s"ORIGINAL $t")
+          println(s"UNFOLDED $t1")
+          false
+        }
+        
+      }
+    )
   }
 
-  identityProperty[Fix].check
+  property("identity fold(AvroType) => Schema => unfold(Schema) has to hold") = identityProperty[Fix]
+
+
 }

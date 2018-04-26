@@ -2,7 +2,7 @@ package com
 package scigility
 package fp_avro
 
-import scala.collection.immutable.ListMap
+import scala.collection.immutable.{ ListMap, ListSet }
 import scalaz.Applicative
 import scalaz.Traverse
 import Data._
@@ -76,6 +76,18 @@ object implicits {
       )
     }
 
+  }
+
+
+  implicit val listSetTraverse:Traverse[ListSet] = new Traverse[ListSet] {
+    override def traverseImpl[G[_]:Applicative,A,B](fa: ListSet[A])(f: A => G[B]): G[ListSet[B]] = {
+      val applicativeG = Applicative[G]
+      fa.foldLeft(applicativeG.pure(ListSet.empty[B]))(
+        (ls, elem) => {
+          applicativeG.apply2(ls, f(elem))(_ + _)
+        }
+      )
+    }
   }
 
 

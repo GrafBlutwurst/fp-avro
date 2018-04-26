@@ -7,6 +7,7 @@ import eu.timepit.refined.numeric._
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.api.Validate
 import eu.timepit.refined.string._
+import eu.timepit.refined.collection._
 import scala.collection.immutable.{ ListMap, ListSet }
 /*import matryoshka._
 import implicits._*/
@@ -72,6 +73,11 @@ object Data{
     )
 
 
+  type AvroName = String Refined AvroValidName
+  type AvroNamespace = String Refined AvroValidNamespace
+  type AvroFQN = AvroNamespace //Has the smae Refinement Type as namespace but is actually Namespace + Name
+  type OptionalNonEmptySet[A] = Option[Set[A] Refined NonEmpty]
+
   sealed trait AvroType[A]
 
   sealed trait AvroPrimitiveType[A] extends AvroType[A]
@@ -86,15 +92,15 @@ object Data{
 
 
   sealed trait AvroComplexType[A] extends AvroType[A]
-  final case class AvroRecordType[A](namespace:String Refined AvroValidNamespace, name:String Refined AvroValidName, doc:Option[String], aliases:Option[Set[String]], fields:ListMap[AvroRecordFieldMetaData, A]) extends AvroComplexType[A]
-  final case class AvroEnumType[A](namespace:String Refined AvroValidNamespace, name:String Refined AvroValidName, doc:Option[String], aliases:Option[Set[String]], symbols:ListSet[String Refined AvroValidName]) extends AvroComplexType[A]
+  final case class AvroRecordType[A](namespace:AvroNamespace, name:AvroName, doc:Option[String], aliases:OptionalNonEmptySet[AvroFQN], fields:ListMap[AvroRecordFieldMetaData, A]) extends AvroComplexType[A]
+  final case class AvroEnumType[A](namespace:AvroNamespace, name:AvroName, doc:Option[String], aliases:OptionalNonEmptySet[AvroFQN], symbols:ListSet[AvroName]) extends AvroComplexType[A]
   final case class AvroArrayType[A](items:A) extends AvroComplexType[A]
   final case class AvroMapType[A](values:A) extends AvroComplexType[A]
   final case class AvroUnionType[A](members:List[A]) extends AvroComplexType[A]
-  final case class AvroFixedType[A](namespace: String Refined AvroValidNamespace, name:String Refined AvroValidName, doc:Option[String], aliases:Option[Set[String]], length:Int Refined Positive) extends AvroComplexType[A]
+  final case class AvroFixedType[A](namespace: AvroNamespace, name:AvroName, doc:Option[String], aliases:OptionalNonEmptySet[AvroFQN], length:Int Refined Positive) extends AvroComplexType[A]
 
 
-  final case class AvroRecordFieldMetaData(name:String, doc:Option[String], default:Option[String], order:Option[AvroRecordSortOrder], aliases:Option[Set[String]]) //FIXME: default should somehow have something to do with the Avro type? does Default work for complex types? e.g. a field that is itself a records? if so how is it represented? JSON encoding? In schema it's a JSON Node. Evaluating that might require the recursive Datatype for instances we still have to do
+  final case class AvroRecordFieldMetaData(name:String, doc:Option[String], default:Option[String], order:Option[AvroRecordSortOrder], aliases:OptionalNonEmptySet[AvroName]) //FIXME: default should somehow have something to do with the Avro type? does Default work for complex types? e.g. a field that is itself a records? if so how is it represented? JSON encoding? In schema it's a JSON Node. Evaluating that might require the recursive Datatype for instances we still have to do
 
   //helpers
   sealed trait AvroRecordSortOrder
