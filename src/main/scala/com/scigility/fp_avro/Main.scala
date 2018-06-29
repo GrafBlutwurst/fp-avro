@@ -47,9 +47,8 @@ object Main{
 
     //unfold a record
     val pair:(Fix[AvroType], Any) = (schemaInternal.right.get, deserializedGenRec)
-    val alg = AvroAlgebra.avroGenericReprToInternal[Fix]
 
-    val out = pair.anaM[Fix[AvroValue[Fix[AvroType], ?]]](alg)
+    val out = pair.anaM[Fix[AvroValue[Fix[AvroType], ?]]](AvroAlgebra.avroGenericReprToInternal[Fix])
     println(out)
 
     //fold down the schema again

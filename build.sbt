@@ -38,7 +38,10 @@ resolvers ++= Seq(
 libraryDependencies ++= Seq(
   "eu.timepit"    %% "refined"         % "0.9.0",
   "com.slamdata"  %% "matryoshka-core" % "0.18.3",
-  "com.chuusai"   %% "shapeless"       % "2.3.3"
+  "com.chuusai"   %% "shapeless"       % "2.3.3",
+  "co.fs2"        %% "fs2-core"        % "0.10.4",
+  "com.spinoco"   %% "fs2-kafka"       % "0.2.0",
+  "org.typelevel" %% "cats-effect"     % "1.0.0-RC2"
 )
 
 //test Dependencies

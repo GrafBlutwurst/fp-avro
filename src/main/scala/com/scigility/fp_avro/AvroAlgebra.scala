@@ -5,6 +5,7 @@ package fp_avro
 
 import eu.timepit.refined.api.Validate
 import matryoshka._
+import org.apache.avro.io.DecoderFactory
 import org.apache.avro.{ Schema }
 import org.apache.avro.Schema.Type
 import org.apache.avro.Schema.Field.Order
@@ -27,13 +28,47 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric._
 import eu.timepit.refined.collection._
 import scala.util.Try
+import matryoshka._
+import matryoshka.implicits._
+import implicits._
+
+
 /**
   *  This is a collection of Algebras to use with FP-Avro:
   *  e.g. to get from a schema to an internal representation
 **/
+trait AvroAlgebra[Eff[_]] {
+  def parseAvroSchema(schemaString:String):Eff[Schema]
+  def unfoldAvroSchema[F[_[_]]](schema:Schema)(implicit birec:Birecursive.Aux[F[AvroType], AvroType]):Eff[F[AvroType]]
+  def decodeAvroJsonRepr(schema:Schema)(avroJsonString:String):Eff[Any]
+  //FIXME: do we actually need birec here?
+  def unfoldGenericRepr[F[_[_]]](schema:F[AvroType])(genRepr:Any)(implicit schemaBirec:Birecursive.Aux[F[AvroType], AvroType], valueCorec:Corecursive.Aux[F[AvroValue[F[AvroType], ?]], AvroValue[F[AvroType], ?]]):Eff[F[AvroValue[F[AvroType], ?]]]
+}
+
+
 //BUG: will crash if used on in-code generated GenericRecord. I suspect that the change from String to avro.util.UTF8 happens during serialization. Will have to build in some sort of runtime type mappings
 object AvroAlgebra {
 
+  val eitherInstance = new AvroAlgebra[Either[String, ?]] {
+
+    def parseAvroSchema(schemaString:String):Either[String, Schema] = 
+      Try {(new Schema.Parser).parse(schemaString) }.toEither.left.map(_.toString)
+
+    def decodeAvroJsonRepr(schema:Schema)(avroJsonString:String):Either[String, Any] = Try {
+        val decoder = DecoderFactory.get().jsonDecoder(schema, avroJsonString)
+        (new GenericDatumReader[Any]).read(null, decoder)
+      }.toEither.left.map(_.toString)
+    
+
+    def unfoldAvroSchema[F[_[_]]](schema:Schema)(implicit birec:Birecursive.Aux[F[AvroType], AvroType]):Either[String, F[AvroType]] =
+      schema.anaM[F[AvroType]](AvroAlgebra.avroSchemaToInternalType)
+
+    def unfoldGenericRepr[F[_[_]]](schema:F[AvroType])(genRepr:Any)(implicit schemaBirec:Birecursive.Aux[F[AvroType], AvroType],  valueCorec:Corecursive.Aux[F[AvroValue[F[AvroType], ?]], AvroValue[F[AvroType], ?]]):Either[String, F[AvroValue[F[AvroType], ?]]] = 
+      (schema, genRepr).anaM[F[AvroValue[F[AvroType], ?]]](AvroAlgebra.avroGenericReprToInternal[F])
+  }
+
+
+  //FIXME: Maybe rewrite this to some generic Error Structure (MonadError, maybe something weaker???)
 
   //FIXME: This needs a rewrite. ListSet and Set need to be sorted out see toList.toSet to get to a proper Set rather than a ListSet. but Set has no Traversable instance, consider just using ListSet
   private[this] def handleAvroAliasesJavaSet[P, A](jSetO: java.util.Set[A])(implicit validateEv:Validate[A,P]): Either[String, OptionalNonEmptySet[A Refined P]] = {
