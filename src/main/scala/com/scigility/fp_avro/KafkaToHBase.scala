@@ -72,7 +72,7 @@ object KafkaToHbase extends IOApp {
            typedRepr <- AA.unfoldGenericRepr[Fix](typedSchema)(genRepr)
          } yield foldTypedRepr(typedRepr)
        }
-     )
+     ) //TODO: Figure out how to split of:  Stream[Either[A,B]] => (Stream[A], Stream[B]) so we can then write the flattable records to hbase and dump the other ones
 
 
     ???
@@ -80,7 +80,7 @@ object KafkaToHbase extends IOApp {
 
 
   def run(args:List[String]):IO[ExitCode] = {
-    
+    runStream[IO](???, ???, ???, ???)
   }
 
 }
