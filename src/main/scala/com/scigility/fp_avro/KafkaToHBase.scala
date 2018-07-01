@@ -38,26 +38,51 @@ object KafkaToHbase extends IOApp {
 
   final case class JsonAvroMessage(schemaId:Int, payLoad:String)
 
+  /**
+    * This is the dummy logger just simply dumping on the console
+    * 
+  **/
   implicit val loggerIO = new spinoco.fs2.kafka.Logger[IO] {
     def log(level: spinoco.fs2.kafka.Logger.Level.Value, msg: => String, throwable: Throwable): IO[Unit] = IO.apply(println(s"[$level]: $msg \t CAUSE: ${throwable.toString}"))
   }
 
 
+  /**
+    * This is the Algebra we require for Kafka Message handling. we assume the following format '{ "schemaID":0, "payload":{...} }'
+  **/
   trait KafkaAlgebra[F[_]] {
     def readJsonAvroMessage(bytes:ByteVector):F[JsonAvroMessage]
   }
 
+  /**
+    * The only operation we require for HBase is writing a record to a table
+  **/
   trait HBaseAlgebra[F[_]]{
     def write(tableName:String, row: HBaseRow):F[Unit]
   }
 
-
+  /**
+    * All we need here is retrieving a schema by ID. we assume the schema is already in the registry or else emmit an error
+  **/
   trait SchemaRegistryAlgebra[F[_]] {
     def retrieveSchemaForID(schemaId:Int):F[String]
   }
 
+  /**
+    * The meat of the usecase. Fold down the Avro AST into a HBase row. This is only possible if it's a RecordType and only contains Primitive fields or Fields that are a Union of a primitive and Null (representing an option type)
+  **/
   def foldTypedRepr(tRepr:Fix[AvroValue[Fix[AvroType], ?]], keyField:String):Either[String, HBaseRow] = ???
 
+
+  /**
+    * Read from Kafka
+    * Decode the byte record into the expected Json envelope format
+    * Retrieve the Schema from the registry
+    * Unfold the schema into Avro AST representation
+    * Unfold the payload into Avro GenRepr AST 
+    * Fold the genrepr into HBase Row if possible
+    * Write to Hbase if everything was a success. else write error to std out
+  **/
   def runStream[F[_] : Effect : kafka.Logger : Monad ](
     HA:HBaseAlgebra[F], SA:SchemaRegistryAlgebra[F], KA:KafkaAlgebra[F], AA: AvroAlgebra[F]
   ) = {
