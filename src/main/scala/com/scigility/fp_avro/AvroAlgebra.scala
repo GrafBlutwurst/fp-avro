@@ -370,7 +370,7 @@ object AvroAlgebra {
           case unionVal:GenericData.Record => {
             val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
               t => t match {
-                case recordType:AvroRecordType[_] => unionVal.getSchema.getNamespace == recordType.namespace && unionVal.getSchema.getName == recordType.name
+                case recordType:AvroRecordType[_] => unionVal.getSchema.getNamespace == recordType.namespace.value && unionVal.getSchema.getName == recordType.name.value
                 case _ => false
               }
             )
@@ -386,7 +386,7 @@ object AvroAlgebra {
           case unionVal:GenericData.EnumSymbol => {
             val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
               t => t match {
-                case enumType:AvroEnumType[_] => unionVal.getSchema.getNamespace == enumType.namespace && unionVal.getSchema.getName == enumType.name
+                case enumType:AvroEnumType[_] => unionVal.getSchema.getNamespace == enumType.namespace.value && unionVal.getSchema.getName == enumType.name.value
                 case _ => false
               }
             )
@@ -434,7 +434,7 @@ object AvroAlgebra {
           case unionVal:GenericData.Fixed => {
             val memberSchemaO = unionSchema.members.map(x => birec.project(x)).find(
               t => t match {
-                case fixedType:AvroFixedType[_] => unionVal.getSchema.getNamespace == fixedType.namespace && unionVal.getSchema.getName == fixedType.name
+                case fixedType:AvroFixedType[_] => unionVal.getSchema.getNamespace == fixedType.namespace.value && unionVal.getSchema.getName == fixedType.name.value
                 case _ => false
               }
             )
