@@ -39,9 +39,15 @@ libraryDependencies ++= Seq(
   "eu.timepit"    %% "refined"         % "0.9.0",
   "com.slamdata"  %% "matryoshka-core" % "0.18.3",
   "com.chuusai"   %% "shapeless"       % "2.3.3",
-  "co.fs2"        %% "fs2-core"        % "0.10.4",
-  "com.spinoco"   %% "fs2-kafka"       % "0.2.0",
-  "org.typelevel" %% "cats-effect"     % "1.0.0-RC2"
+  "co.fs2"        %% "fs2-core"        % "1.0.0-M2",
+  "com.spinoco"   %% "fs2-kafka"       % "0.4.0-M2",
+  "org.typelevel" %% "cats-effect"     % "1.0.0-RC2",
+  "org.apache.hbase" % "hbase-client" % "2.1.0",
+  "org.apache.hbase" % "hbase-common" % "2.1.0",
+  "org.http4s" %% "http4s-dsl" % "0.19.0-M1",
+  "org.http4s" %% "http4s-blaze-server" % "0.19.0-M1",
+  "org.http4s" %% "http4s-blaze-client" % "0.19.0-M1"
+
 )
 
 //test Dependencies

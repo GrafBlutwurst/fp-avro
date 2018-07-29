@@ -6,16 +6,18 @@ package fp_avro
 import eu.timepit.refined.api.Validate
 import matryoshka._
 import org.apache.avro.io.DecoderFactory
-import org.apache.avro.{ Schema }
+import org.apache.avro.Schema
 import org.apache.avro.Schema.Type
 import org.apache.avro.Schema.Field.Order
 import org.apache.avro.Schema.Field
 import org.apache.avro.generic.GenericData
 import Data._
 import org.apache.avro.generic._
+
 import scala.collection.JavaConverters._
-import scala.collection.immutable.{ ListMap, ListSet }
+import scala.collection.immutable.{ListMap, ListSet}
 import implicits._
+
 import scala.reflect.runtime.universe._
 import scalaz._
 import Scalaz._
@@ -27,7 +29,8 @@ import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric._
 import eu.timepit.refined.collection._
-import scala.util.Try
+
+import scala.util.{Try, Success, Failure}
 import matryoshka._
 import matryoshka.implicits._
 import implicits._
@@ -40,7 +43,7 @@ import implicits._
 trait AvroAlgebra[Eff[_]] {
   def parseAvroSchema(schemaString:String):Eff[Schema]
   def unfoldAvroSchema[F[_[_]]](schema:Schema)(implicit birec:Birecursive.Aux[F[AvroType], AvroType]):Eff[F[AvroType]]
-  def decodeAvroJsonRepr(schema:Schema)(avroJsonString:String):Eff[Any]
+  def decodeAvroJsonRepr(schema:Schema)(avroJsonString:String):Eff[Any] //FIXME: do we want to expose Any here?
   //FIXME: do we actually need birec here?
   def unfoldGenericRepr[F[_[_]]](schema:F[AvroType])(genRepr:Any)(implicit schemaBirec:Birecursive.Aux[F[AvroType], AvroType], valueCorec:Corecursive.Aux[F[AvroValue[F[AvroType], ?]], AvroValue[F[AvroType], ?]]):Eff[F[AvroValue[F[AvroType], ?]]]
 }
@@ -49,22 +52,36 @@ trait AvroAlgebra[Eff[_]] {
 //BUG: will crash if used on in-code generated GenericRecord. I suspect that the change from String to avro.util.UTF8 happens during serialization. Will have to build in some sort of runtime type mappings
 object AvroAlgebra {
 
-  val eitherInstance = new AvroAlgebra[Either[String, ?]] {
+  //FIXME: UGHHHH use shims here at some point
+  def catsMeInstance[E, ME[_]: cats.MonadError[?[_], E]](ef: String => E) = new AvroAlgebra[ME] {
 
-    def parseAvroSchema(schemaString:String):Either[String, Schema] = 
-      Try {(new Schema.Parser).parse(schemaString) }.toEither.left.map(_.toString)
 
-    def decodeAvroJsonRepr(schema:Schema)(avroJsonString:String):Either[String, Any] = Try {
-        val decoder = DecoderFactory.get().jsonDecoder(schema, avroJsonString)
-        (new GenericDatumReader[Any]).read(null, decoder)
-      }.toEither.left.map(_.toString)
-    
+    def parseAvroSchema(schemaString:String):ME[Schema] =
+      Try {(new Schema.Parser).parse(schemaString) } match {
+        case Success(v) => cats.MonadError[ME, E].pure(v)
+        case Failure(t) => cats.MonadError[ME, E].raiseError(ef(t.toString))
+      }
 
-    def unfoldAvroSchema[F[_[_]]](schema:Schema)(implicit birec:Birecursive.Aux[F[AvroType], AvroType]):Either[String, F[AvroType]] =
-      schema.anaM[F[AvroType]](AvroAlgebra.avroSchemaToInternalType)
+    def decodeAvroJsonRepr(schema:Schema)(avroJsonString:String):ME[Any] = Try {
+      val decoder = DecoderFactory.get().jsonDecoder(schema, avroJsonString)
+      new GenericDatumReader[Any].read(null, decoder)
+    } match {
+      case Success(v) => cats.MonadError[ME, E].pure(v)
+      case Failure(t) => cats.MonadError[ME, E].raiseError(ef(t.toString))
+    }
 
-    def unfoldGenericRepr[F[_[_]]](schema:F[AvroType])(genRepr:Any)(implicit schemaBirec:Birecursive.Aux[F[AvroType], AvroType],  valueCorec:Corecursive.Aux[F[AvroValue[F[AvroType], ?]], AvroValue[F[AvroType], ?]]):Either[String, F[AvroValue[F[AvroType], ?]]] = 
-      (schema, genRepr).anaM[F[AvroValue[F[AvroType], ?]]](AvroAlgebra.avroGenericReprToInternal[F])
+
+    def unfoldAvroSchema[F[_[_]]](schema:Schema)(implicit birec:Birecursive.Aux[F[AvroType], AvroType]):ME[F[AvroType]] =
+      schema.anaM[F[AvroType]](AvroAlgebra.avroSchemaToInternalType).fold(
+        err => cats.MonadError[ME, E].raiseError(ef(err)),
+        fpVal => cats.MonadError[ME, E].pure(fpVal)
+      )
+
+    def unfoldGenericRepr[F[_[_]]](schema:F[AvroType])(genRepr:Any)(implicit schemaBirec:Birecursive.Aux[F[AvroType], AvroType],  valueCorec:Corecursive.Aux[F[AvroValue[F[AvroType], ?]], AvroValue[F[AvroType], ?]]):ME[F[AvroValue[F[AvroType], ?]]] =
+      (schema, genRepr).anaM[F[AvroValue[F[AvroType], ?]]](AvroAlgebra.avroGenericReprToInternal[F]).fold(
+        err => cats.MonadError[ME, E].raiseError(ef(err)),
+        fpVal => cats.MonadError[ME, E].pure(fpVal)
+      )
   }
 
 
