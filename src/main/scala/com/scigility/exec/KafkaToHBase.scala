@@ -85,6 +85,8 @@ object KafkaToHbase extends IOApp {
         AvroValue[Fix[AvroType], ?],
         F[Catenable[HBaseCell]]
       ] = {
+
+      //TERMINAL SYMBOLS
       //Primitives and single values with NS and name are always valid
       case AvroNullValue(_)                               => F.pure(Catenable.singleton(cell("null", ByteVector.empty)))//Map("null" -> ByteVector.empty).right[String]
       case AvroBooleanValue(_, value)                     => F.pure(Catenable.singleton(cell("boolean", value.byteVector)))//Map("boolean" -> ByteVector(Bytes.toBytes(value))).right[String]
@@ -95,6 +97,27 @@ object KafkaToHbase extends IOApp {
       case AvroBytesValue(_ , value)                      => F.pure(Catenable.singleton(cell("bytes", value.byteVector)))//Map("bytes" -> ByteVector(value)).right[String]
       case AvroStringValue(_, value)                      => F.pure(Catenable.singleton(cell("string", value.byteVector)))//Map("string" -> ByteVector(Bytes.toBytes(value))).right[String]
       case AvroEnumValue(schema, symbol)                  => F.pure(Catenable.singleton(cell(schema.name.value , symbol.byteVector)))//Map(schema.name.value -> ByteVector(Bytes.toBytes(symbol))).right[String]
+      //insert as is
+      case AvroFixedValue(schema, bytes)                  => F.pure(Catenable.singleton(cell(schema.name.value , bytes.byteVector)))
+      // for unions we need to check if they're only used to represent optionals [primitive, null]
+      case AvroUnionValue(schema, Cofree(value, _)) => {
+        val validUnion = schema.members.map(_.unFix).foldLeft((0, true))(
+          (tpl, dt) => dt match {
+            case AvroNullType()     => tpl
+            case AvroBooleanType()  => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
+            case AvroIntType()      => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
+            case AvroLongType()     => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
+            case AvroFloatType()    => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
+            case AvroDoubleType()   => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
+            case AvroBytesType()    => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
+            case AvroStringType()   => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
+            case _ => (tpl._1 + 1, false)
+          }
+        )._2
+
+        if (validUnion) value else F.raiseError(new RuntimeException("Was not a valid Union, only one primitive plus null allowed"))
+      }
+      //NON TERMINAL SYMBOLS
       //for arrays we need to prepend the index of the item to generate a column for each item
       case AvroArrayValue(_, items)                       => items
           .map(_.head)
@@ -118,26 +141,8 @@ object KafkaToHbase extends IOApp {
         )
         .combineAll(cellCombinationMonoid)
 
-      // for unions we need to check if they're only used to represent optionals [primitive, null]
-      case AvroUnionValue(schema, Cofree(value, _)) => {
-        val validUnion = schema.members.map(_.unFix).foldLeft((0, true))(
-          (tpl, dt) => dt match {
-            case AvroNullType()     => tpl
-            case AvroBooleanType()  => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
-            case AvroIntType()      => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
-            case AvroLongType()     => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
-            case AvroFloatType()    => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
-            case AvroDoubleType()   => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
-            case AvroBytesType()    => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
-            case AvroStringType()   => if (tpl._1 == 0) (tpl._1 + 1, false) else (tpl._1 + 1 , tpl._2)
-            case _ => (tpl._1 + 1, false)
-          }
-        )._2
 
-        if (validUnion) value else F.raiseError(new RuntimeException("Was not a valid Union, only one primitive plus null allowed"))
-      }
-        //insert as is
-      case AvroFixedValue(schema, bytes)                  => F.pure(Catenable.singleton(cell(schema.name.value , bytes.byteVector)))
+
 
       case AvroRecordValue(schema, fields)                => fields
         .toList
