@@ -1,7 +1,4 @@
-package com
-package scigility
-package fp_avro
-
+/*package com.scigility.exec
 
 object Examples {
 
@@ -100,3 +97,4 @@ object Examples {
 
 
 }
+*/

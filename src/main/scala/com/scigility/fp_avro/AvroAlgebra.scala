@@ -3,37 +3,29 @@ package scigility
 package fp_avro
 
 
-import eu.timepit.refined.api.Validate
+import com.scigility.fp_avro.Data._
+import com.scigility.fp_avro.implicits._
+import eu.timepit.refined._
+import eu.timepit.refined.api.{Refined, Validate}
+import eu.timepit.refined.auto._
+import eu.timepit.refined.collection._
+import eu.timepit.refined.numeric._
 import matryoshka._
-import org.apache.avro.io.DecoderFactory
+import matryoshka.implicits._
 import org.apache.avro.Schema
-import org.apache.avro.Schema.Type
 import org.apache.avro.Schema.Field.Order
-import org.apache.avro.Schema.Field
-import org.apache.avro.generic.GenericData
-import Data._
-import org.apache.avro.generic._
+import org.apache.avro.Schema.{Field, Type}
+import org.apache.avro.generic.{GenericData, _}
+import org.apache.avro.io.DecoderFactory
+import scalaz.Scalaz._
+import scalaz._
+import shapeless.Typeable
+import shapeless.Typeable._
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.{ListMap, ListSet}
-import implicits._
-
 import scala.reflect.runtime.universe._
-import scalaz._
-import Scalaz._
-import syntax.traverse._
-import shapeless.Typeable
-import shapeless.Typeable._
-import eu.timepit.refined._
-import eu.timepit.refined.api.Refined
-import eu.timepit.refined.auto._
-import eu.timepit.refined.numeric._
-import eu.timepit.refined.collection._
-
-import scala.util.{Try, Success, Failure}
-import matryoshka._
-import matryoshka.implicits._
-import implicits._
+import scala.util.{Failure, Success, Try}
 
 
 /**
@@ -64,7 +56,7 @@ object AvroAlgebra {
 
     def decodeAvroJsonRepr(schema:Schema)(avroJsonString:String):ME[Any] = Try {
       val decoder = DecoderFactory.get().jsonDecoder(schema, avroJsonString)
-      new GenericDatumReader[Any].read(null, decoder)
+      new GenericDatumReader[Any](schema, schema).read(null, decoder)
     } match {
       case Success(v) => cats.MonadError[ME, E].pure(v)
       case Failure(t) => cats.MonadError[ME, E].raiseError(ef(t.toString))
@@ -113,7 +105,7 @@ object AvroAlgebra {
     * e.g. schema.ana[Fix[AvroType]](AvroAlgebra.avroSchemaToInternalType)
     * 
   **/
-  val avroSchemaToInternalType:CoalgebraM[Either[String,?], AvroType, Schema] = (schema:Schema) => schema.getType match {
+  def avroSchemaToInternalType:CoalgebraM[Either[String,?], AvroType, Schema] = (schema:Schema) => schema.getType match {
     case Type.NULL => Right(AvroNullType())
     case Type.BOOLEAN => Right(AvroBooleanType())
     case Type.INT => Right(AvroIntType())

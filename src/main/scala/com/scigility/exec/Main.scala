@@ -1,25 +1,17 @@
-package com
-package scigility
-package fp_avro
+/*package com.scigility.exec
 
-import java.io.File
-import matryoshka.data.Fix
-import org.apache.avro.Schema
-
-import matryoshka._
-import matryoshka.implicits._
-import implicits._
-import Data._
-import org.apache.avro.file.{ DataFileReader, DataFileWriter }
-import org.apache.avro.generic.{ GenericData, GenericDatumReader, GenericDatumWriter }
-import scalaz._
-import Scalaz._
-
+import com.scigility.fp_avro.{HBaseAlgebra, HBaseEntry, HBaseRow}
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.hbase.HBaseConfiguration
+import org.apache.hadoop.hbase.client.ConnectionFactory
+import org.apache.hadoop.hbase.util.Bytes
+import scalaz.IList
+import scodec.bits.ByteVector
 
 object Main{
 
   def main(args:Array[String]):Unit = {
-    val schemaString = """{"type": "record","namespace": "com.example","name": "FullName","fields": [{ "name": "first", "type": "string" }, { "name": "last", "type": "string" }, {"name": "uniontest", "type": ["null","string","int"]}]} """
+    /*val schemaString = """{"type": "record","namespace": "com.example","name": "FullName","fields": [{ "name": "first", "type": "string" }, { "name": "last", "type": "string" }, {"name": "uniontest", "type": ["null","string","int"]}]} """
     val schema:Schema = (new Schema.Parser).parse(schemaString)
     //unfold a schema
     val schemaInternal = schema.anaM[Fix[AvroType]](AvroAlgebra.avroSchemaToInternalType)
@@ -63,10 +55,21 @@ object Main{
     val recC = out.right.get.cata(AvroAlgebra.avroValueToGenericRepr[Fix])
     println(s"orig rec: $deserializedGenRec")
     println(s"cata rec: $recC")
-    assert(recC.equals(deserializedGenRec)) //this should equal the original record
-    
-    
+    assert(recC.equals(deserializedGenRec)) //this should equal the original record*/
+
+
+    val conf : Configuration = HBaseConfiguration.create()
+    val ZOOKEEPER_QUORUM = "localhost:2181"
+    conf.set("hbase.zookeeper.quorum", ZOOKEEPER_QUORUM)
+    conf.set("hbase.client.retries.number", "1")
+    conf.set("hbase.client.pause", "500")
+
+
+    val connection = ConnectionFactory.createConnection(conf)
+
+    //HBaseAlgebra.ioHBaseAlgebra(connection).write("smoketest", HBaseRow(ByteVector(Bytes.toBytes("key")), IList(HBaseEntry("cols", "col", ByteVector(Bytes.toBytes(3)))))).unsafeRunSync()
+
   }
 
 }
-
+*/

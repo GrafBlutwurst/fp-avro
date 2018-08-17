@@ -34,19 +34,25 @@ resolvers ++= Seq(
   Resolver.sonatypeRepo("snapshots")
 )
 
+val circeVersion = "0.9.3"
+val log4catsVersion = "0.1.0"
+val http4sVersion = "0.18.16"
+
 //Scala Dependencies
 libraryDependencies ++= Seq(
   "eu.timepit"    %% "refined"         % "0.9.0",
   "com.slamdata"  %% "matryoshka-core" % "0.18.3",
-  "com.chuusai"   %% "shapeless"       % "2.3.3",
-  "co.fs2"        %% "fs2-core"        % "1.0.0-M2",
-  "com.spinoco"   %% "fs2-kafka"       % "0.4.0-M2",
+  //"com.chuusai"   %% "shapeless"       % "2.3.3",
+  //"co.fs2"        %% "fs2-core"        % "1.0.0-M2", //implicitly in http4s
+  "com.spinoco"   %% "fs2-kafka"       % "0.2.0",
   "org.typelevel" %% "cats-effect"     % "1.0.0-RC2",
-  "org.apache.hbase" % "hbase-client" % "2.1.0",
-  "org.apache.hbase" % "hbase-common" % "2.1.0",
-  "org.http4s" %% "http4s-dsl" % "0.19.0-M1",
-  "org.http4s" %% "http4s-blaze-server" % "0.19.0-M1",
-  "org.http4s" %% "http4s-blaze-client" % "0.19.0-M1"
+  "org.http4s"        %% "http4s-dsl"                 % http4sVersion,
+  "org.http4s"        %% "http4s-blaze-client"        % http4sVersion,
+  "org.http4s"        %% "http4s-circe"               % http4sVersion,
+  "org.http4s"        %% "http4s-core"               % http4sVersion,
+  "io.circe"          %% "circe-generic"              % circeVersion,
+  "io.circe"          %% "circe-refined"              % circeVersion,
+  "io.chrisdavenport" %% "log4cats-slf4j"             % log4catsVersion
 
 )
 
@@ -58,9 +64,46 @@ libraryDependencies ++= Seq(
 
 //Java Dependencies
 libraryDependencies ++= Seq(
-  "org.apache.avro" % "avro" % "1.8.2"
+  "org.apache.hadoop" % "hadoop-client" % "2.7.7",
+  "org.apache.avro" % "avro" % "1.8.2",
+  "org.apache.hbase" % "hbase-client" % "2.1.0",
+  "org.apache.hbase" % "hbase-common" % "2.1.0",
 )
 
+/*
+assemblyShadeRules in assembly := Seq(
+  ShadeRule.rename("fs2.**" -> "fs2-http4s.@1").inLibrary(
+    "org.http4s"        %% "http4s-dsl"                 % http4sVersion,
+    "org.http4s"        %% "http4s-blaze-client"        % http4sVersion,
+    "org.http4s"        %% "http4s-core"               % http4sVersion,
+    "org.http4s"        %% "http4s-circe"               % http4sVersion
+  ).inProject
+)*/
+assemblyMergeStrategy in assembly := {
+  case x if Assembly.isConfigFile(x) =>
+    MergeStrategy.concat
+  case PathList(ps @ _*) if Assembly.isReadme(ps.last) || Assembly.isLicenseFile(ps.last) =>
+    MergeStrategy.rename
+  case PathList("META-INF", xs @ _*) =>
+    (xs map {_.toLowerCase}) match {
+      case ("manifest.mf" :: Nil) | ("index.list" :: Nil) | ("dependencies" :: Nil) =>
+        MergeStrategy.discard
+      case ps @ (x :: xs) if ps.last.endsWith(".sf") || ps.last.endsWith(".dsa") =>
+        MergeStrategy.discard
+      case ps @ (x :: xs) if ps.last == "pom.xml" || ps.last == "pom.properties" || ps.last == "io.netty.versions.properties" =>
+        MergeStrategy.discard
+      case "plexus" :: xs =>
+        MergeStrategy.discard
+      case "services" :: xs =>
+        MergeStrategy.filterDistinctLines
+      case ("spring.schemas" :: Nil) | ("spring.handlers" :: Nil) =>
+        MergeStrategy.filterDistinctLines
+      case _ => MergeStrategy.deduplicate
+    }
+  case x => MergeStrategy.first
+}
+
+mainClass in assembly := Some("com.scigility.exec.KafkaToHbase")
 
 enablePlugins(TutPlugin)
 
