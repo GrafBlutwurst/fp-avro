@@ -3,19 +3,17 @@ package com.scigility.exec
 import java.nio.channels.AsynchronousChannelGroup
 import java.util.concurrent.Executors
 
-import cats.Monad
+import cats._
 import cats.effect._
 import cats.implicits._
 import com.scigility.fp_avro.Data._
 import com.scigility.fp_avro.{implicits => _, _}
 import matryoshka._
 import matryoshka.implicits._
-import matryoshka.data.Fix
+import matryoshka.data._
 import matryoshka.patterns.EnvT
 import org.apache.hadoop.hbase.util.Bytes
-import scalaz.Scalaz._
 import com.scigility.fp_avro.implicits._
-import scalaz._
 import scodec.bits.ByteVector
 import spinoco.fs2.kafka
 import spinoco.protocol.kafka._
@@ -26,9 +24,11 @@ import eu.timepit.refined.numeric.Positive
 import eu.timepit.refined.string._
 
 import scala.concurrent.ExecutionContext
-import fs2.Scheduler
+import fs2.{Catenable, Scheduler}
 import io.chrisdavenport.log4cats.SelfAwareStructuredLogger
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+
+import scalaz.Cofree
 
 object KafkaToHbase extends IOApp {
 
@@ -42,57 +42,82 @@ object KafkaToHbase extends IOApp {
     * The meat of the usecase. Fold down the Avro AST into a HBase row. This is only possible if it's a RecordType and only contains Primitive fields or Fields that are a Union of a primitive and Null (representing an option type)
   **/
   //FIXME: Rethink flattening strategy and use of histomorphism. right now this is broken as described below (only detects direct nesting of records)
-  def foldTypedRepr(tRepr:Fix[AvroValue[Fix[AvroType], ?]], keyField:String):String \/ HBaseRow = {
+  def foldTypedRepr[F[_]:MonadError[?[_], Throwable]](columnFamily:String, keyField:String)(tRepr:Fix[AvroValue[Fix[AvroType], ?]])():F[HBaseRow] = {
 
-    def tryMergeMap[K,V](lst:List[Map[K,V]]): String \/ Map[K,V] =
-      lst.foldLeft[String \/ Map[K,V]](Map.empty[K, V].right[String])(
-        (either, curr) => {
-          either.flatMap(
-            mapAcc => {
-              val overlapping = (mapAcc.keySet union curr.keySet)
-              if ( overlapping.isEmpty ) (mapAcc ++ curr).right[String] else s"Duplicate Keys detected $overlapping".left[Map[K,V] ]
-            }
-          )
+    val F = MonadError[F, Throwable]
 
-        }
+
+    def prefixCellIdentifiers(prefix: String)(cells:Catenable[HBaseCell]) =
+      cells.map(
+        cell => cell.copy(
+          cellIdentifier = prefix + cell.cellIdentifier
+        )
       )
 
 
-    val alg  : GAlgebra[
+
+
+
+    val cellCombinationMonoid: Monoid[F[Catenable[HBaseCell]]] = new Monoid[F[Catenable[HBaseCell]]] {
+      override def empty: F[Catenable[HBaseCell]] = F.pure(Monoid[Catenable[HBaseCell]].empty)
+
+      override def combine(x: F[Catenable[HBaseCell]], y: F[Catenable[HBaseCell]]): F[Catenable[HBaseCell]] =
+        (x,y).mapN(
+          (lhs, rhs) =>
+            if (lhs.map(_.cellIdentifier).toList.toSet.intersect(rhs.map(_.cellIdentifier).toList.toSet).isEmpty)
+              F.pure(lhs |+| rhs)
+            else
+              F.raiseError[Catenable[HBaseCell]](new RuntimeException("Cannot have duplicate keys."))
+        ).flatten
+
+
+    }
+
+
+
+    import HBaseAlgebra.BytesGeneration._
+
+    def cell(identifier:String, value:ByteVector) = HBaseCell(columnFamily, identifier, value)
+
+
+    val assembleHBaseCells  : GAlgebra[
         Cofree[AvroValue[Fix[AvroType], ?], ?],
         AvroValue[Fix[AvroType], ?],
-        String \/ Map[String,ByteVector]
+        F[Catenable[HBaseCell]]
       ] = {
       //Primitives and single values with NS and name are always valid
-      case AvroNullValue(_)                               => Map("value" -> ByteVector.empty).right[String]
-      case AvroBooleanValue(_, value)                     => Map("value" -> ByteVector(Bytes.toBytes(value))).right[String]
-      case AvroIntValue(_, value)                         => Map("value" -> ByteVector(Bytes.toBytes(value))).right[String]
-      case AvroLongValue(_, value)                        => Map("value" -> ByteVector(Bytes.toBytes(value))).right[String]
-      case AvroFloatValue(_ , value)                      => Map("value" -> ByteVector(Bytes.toBytes(value))).right[String]
-      case AvroDoubleValue(_, value)                      => Map("value" -> ByteVector(Bytes.toBytes(value))).right[String]
-      case AvroBytesValue(_ , value)                      => Map("value" -> ByteVector(value)).right[String]
-      case AvroStringValue(_, value)                      => Map("value" -> ByteVector(Bytes.toBytes(value))).right[String]
-      case AvroEnumValue(schema, symbol)                  => Map(schema.namespace.value + "." + schema.name.value -> ByteVector(Bytes.toBytes(symbol))).right[String]
+      case AvroNullValue(_)                               => F.pure(Catenable.singleton(cell("null", ByteVector.empty)))//Map("null" -> ByteVector.empty).right[String]
+      case AvroBooleanValue(_, value)                     => F.pure(Catenable.singleton(cell("boolean", value.byteVector)))//Map("boolean" -> ByteVector(Bytes.toBytes(value))).right[String]
+      case AvroIntValue(_, value)                         => F.pure(Catenable.singleton(cell("int", value.byteVector)))//Map("int" -> ByteVector(Bytes.toBytes(value))).right[String]
+      case AvroLongValue(_, value)                        => F.pure(Catenable.singleton(cell("long", value.byteVector)))//Map("long" -> ByteVector(Bytes.toBytes(value))).right[String]
+      case AvroFloatValue(_ , value)                      => F.pure(Catenable.singleton(cell("float", value.byteVector)))//Map("float" -> ByteVector(Bytes.toBytes(value))).right[String]
+      case AvroDoubleValue(_, value)                      => F.pure(Catenable.singleton(cell("double", value.byteVector)))//Map("double" -> ByteVector(Bytes.toBytes(value))).right[String]
+      case AvroBytesValue(_ , value)                      => F.pure(Catenable.singleton(cell("bytes", value.byteVector)))//Map("bytes" -> ByteVector(value)).right[String]
+      case AvroStringValue(_, value)                      => F.pure(Catenable.singleton(cell("string", value.byteVector)))//Map("string" -> ByteVector(Bytes.toBytes(value))).right[String]
+      case AvroEnumValue(schema, symbol)                  => F.pure(Catenable.singleton(cell(schema.name.value , symbol.byteVector)))//Map(schema.name.value -> ByteVector(Bytes.toBytes(symbol))).right[String]
       //for arrays we need to prepend the index of the item to generate a column for each item
-      case AvroArrayValue(_, items)                       => Traverse[List].traverse(items) {
-        case Cofree(value, _) => value.map(
-          _.toList.zipWithIndex.map(
-            withIndex => {
-              s"Array[${withIndex._2}].${withIndex._1._1}" -> withIndex._1._2
+      case AvroArrayValue(_, items)                       => items
+          .map(_.head)
+          .zipWithIndex
+          .map(
+            tpl => {
+              val arrayItemCells = tpl._1
+              val idx = tpl._2
+
+              arrayItemCells.fmap(prefixCellIdentifiers(s"Array[$idx]."))
             }
-          ).toMap
-        )
-      }.flatMap(tryMergeMap)
+          )
+          .combineAll(cellCombinationMonoid)
+
       //for maps we prepend the key
-      case AvroMapValue(_, valueMap)                      => Traverse[List].traverse(valueMap.toList) {
-        case (k, Cofree(value, _)) => value.map(
-          _.toList.map(
-            kv => {
-              s"$k.${kv._1}" -> kv._2
-            }
-          ).toMap
+      case AvroMapValue(_, valueMap)                      => valueMap
+        .map(kv => kv._1 -> kv._2.head)
+        .toList
+        .map(
+          tpl => tpl._2.fmap(prefixCellIdentifiers(tpl._1))
         )
-      }.flatMap(tryMergeMap)
+        .combineAll(cellCombinationMonoid)
+
       // for unions we need to check if they're only used to represent optionals [primitive, null]
       case AvroUnionValue(schema, Cofree(value, _)) => {
         val validUnion = schema.members.map(_.unFix).foldLeft((0, true))(
@@ -109,68 +134,46 @@ object KafkaToHbase extends IOApp {
           }
         )._2
 
-        if (validUnion) value else "Was not a valid Union, only one primitive plus null allowed".left[Map[String,ByteVector]]
+        if (validUnion) value else F.raiseError(new RuntimeException("Was not a valid Union, only one primitive plus null allowed"))
       }
         //insert as is
-      case AvroFixedValue(schema, bytes)                  => Map(schema.namespace.value + "." + schema.name.value -> ByteVector(bytes)).right[String]
+      case AvroFixedValue(schema, bytes)                  => F.pure(Catenable.singleton(cell(schema.name.value , bytes.byteVector)))
 
-      case AvroRecordValue(schema, fields)                => Traverse[List].traverse(fields.toList)(
-        (fld :(String, Cofree[AvroValue[Fix[AvroType], ?],String \/ Map[String,ByteVector]]) )=> {
-          val localKey = s"""${schema.namespace}.${schema.name}.${fld._1}"""
-          val value:String \/ Map[String,ByteVector] = fld._2.head
+      case AvroRecordValue(schema, fields)                => fields
+        .toList
+        .map(
+          fieldDefinition => {
+            val checkForRecordAlg: Algebra[EnvT[F[Catenable[HBaseCell]], AvroValue[Fix[AvroType], ?], ?], Boolean] = {
+              case EnvT((_, AvroNullValue(_)))           => true
+              case EnvT((_, AvroBooleanValue(_, _)))     => true
+              case EnvT((_, AvroIntValue(_, _)))         => true
+              case EnvT((_, AvroLongValue(_, _)))        => true
+              case EnvT((_, AvroFloatValue(_ , _)))      => true
+              case EnvT((_, AvroDoubleValue(_, _)))      => true
+              case EnvT((_, AvroBytesValue(_ , _)))      => true
+              case EnvT((_, AvroStringValue(_, _)))      => true
+              case EnvT((_, AvroEnumValue(_, _)))        => true
+              case EnvT((_, AvroArrayValue(_, items)))   => items.forall(identity)
+              case EnvT((_, AvroMapValue(_, valueMap)))  => valueMap.values.toList.forall(identity)
+              case EnvT((_, AvroUnionValue(_, value)))   => value
+              case EnvT((_, AvroFixedValue(_, _)))       => true
+              case EnvT((_, AvroRecordValue(_, _)))      => false
+            }
 
-          val checkForRecordAlg: Algebra[EnvT[String \/ Map[String,ByteVector], AvroValue[Fix[AvroType], ?], ?], Boolean] = {
-            case EnvT((_, AvroNullValue(_)))           => true
-            case EnvT((_, AvroBooleanValue(_, _)))     => true
-            case EnvT((_, AvroIntValue(_, _)))         => true
-            case EnvT((_, AvroLongValue(_, _)))        => true
-            case EnvT((_, AvroFloatValue(_ , _)))      => true
-            case EnvT((_, AvroDoubleValue(_, _)))      => true
-            case EnvT((_, AvroBytesValue(_ , _)))      => true
-            case EnvT((_, AvroStringValue(_, _)))      => true
-            case EnvT((_, AvroEnumValue(_, _)))        => true
-            case EnvT((_, AvroArrayValue(_, items)))   => items.all(identity)
-            case EnvT((_, AvroMapValue(_, valueMap)))  => valueMap.values.toList.all(identity)
-            case EnvT((_, AvroUnionValue(_, value)))   => value
-            case EnvT((_, AvroFixedValue(_, _)))       => true
-            case EnvT((_, AvroRecordValue(_, _)))      => false
+            if (fieldDefinition._2.cata(checkForRecordAlg))
+              F.raiseError[Catenable[HBaseCell]](new RuntimeException("Nested Record Detected. This is not allowed"))
+            else
+              fieldDefinition._2.head.map(prefixCellIdentifiers(s"${schema.name}.${fieldDefinition._1}."))
           }
-
-          val containsRecord = fld._2.cata(checkForRecordAlg)
-
-          if (containsRecord)
-            "Nested Record Detected. This is not allowed".left[Map[String,ByteVector]] //will not detect indirectly nested records
-          else
-            value.map(
-              map => map.map(
-                kv => s"$localKey.{kv._1}" -> kv._2
-              )
-            )
-
-        }
-      ).flatMap(tryMergeMap)
+        ).combineAll(cellCombinationMonoid)
     }
 
 
-    val eMap:String \/ Map[String,ByteVector] = tRepr.histo(alg)
 
-    eMap.flatMap(
-      map => {
-        map.get(keyField).map(
-          kf => {
-            val cells = IList.fromList((map - keyField).toList).map(
-              kv => HBaseEntry("meta", kv._1, kv._2)
-            )
-
-            HBaseRow(kf, cells)
-          }
-        ).fold[String \/ HBaseRow](
-          s"Keyfield $keyField was not in keys ${map.keySet}".left[HBaseRow]
-        )(
-          _.right[String]
-        )
-      }
-    )
+    for {
+      prefixedEntries <- tRepr.histo(assembleHBaseCells)
+      rowKey <- prefixedEntries.toList.find(_.cellIdentifier == keyField).map(F.pure).getOrElse(F.raiseError(new RuntimeException(s"no Key field of name $keyField was found in record")))
+    } yield HBaseRow(rowKey.value, prefixedEntries)
   }
 
 
@@ -213,17 +216,16 @@ object KafkaToHbase extends IOApp {
              _ <- LA.debug("unfolded message")
              typedRepr <- AA.unfoldGenericRepr[Fix](typedSchema)(genRepr)
              _ <- LA.debug("refolded message to hbase repr")
-           } yield foldTypedRepr(typedRepr, "value")
+             refolded <-foldTypedRepr[F]("meta", "key")(typedRepr)
+           } yield refolded
 
-           out.recoverWith {
-             case t => ConcurrentEffect[F].delay { t.getMessage.left[HBaseRow] }
-           }
+           out.attempt
          }
        )
-       .observe(_.collect { case -\/(err) => err }.to(fs2.Sink(s => LA.error(s))) )
+       .observe(_.collect { case Left(err) => err }.to(fs2.Sink(t => LA.error(t)("Error during Processing Message:"))) )
        .observe(
          _.collect {
-           case \/-(hbaseEntry) => hbaseEntry
+           case Right(hbaseEntry) => hbaseEntry
          }.to(
            fs2.Sink(
                LA.info(s"WRITING TO HBASE") *>
