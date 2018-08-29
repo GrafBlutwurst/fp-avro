@@ -164,8 +164,8 @@ object KafkaToHbase extends IOApp {
             }
             val schemaNu = typeBirec.embed(fieldDefinition._2._1.unFix.schema)
 
-            if (typeBirec.cata(schemaNu)(checkForRecordAlg))
-              M.raiseError[Catenable[HBaseCell]](new RuntimeException("Nested Record Detected. This is not allowed"))
+            if (!typeBirec.cata(schemaNu)(checkForRecordAlg))
+              M.raiseError[Catenable[HBaseCell]](new RuntimeException("Nested Record Detected. This is not allowed " + fieldDefinition._2._1.unFix.schema))
             else
               M.pure(prefixCellIdentifiers(s"${schema.name}.${fieldDefinition._1}.")(fieldDefinition._2._2))
           }
@@ -201,7 +201,7 @@ object KafkaToHbase extends IOApp {
        .client(
          Set(kafka.broker("localhost", port = 9092)),
          ProtocolVersion.Kafka_0_10_2,
-         "my-client-name"
+         "my-client-name-2"
        )
        .flatMap(kafkaClient => kafkaClient.subscribe(kafka.topic("lambdaletest"), kafka.partition(0), kafka.HeadOffset))
       .evalMap(topicMessage =>
@@ -215,7 +215,7 @@ object KafkaToHbase extends IOApp {
              _ <- LA.debug("unfolded Schema")
              typedRepr <- AvroJsonFAlgebras.parseDatum[F, Fix](avroSchema)(jsonAvroMsg.payload)
              _ <- LA.debug("refolded message to hbase repr")
-             refolded <-foldTypedRepr[F]("meta", "key")(typedRepr)
+             refolded <-foldTypedRepr[F]("meta", "foo.b.int")(typedRepr)
            } yield refolded
 
            out.attempt
