@@ -1,5 +1,5 @@
 name := "fp-avro"
-version := "0.0.1-SNAPSHOT"
+version := "0.0.3-SNAPSHOT"
 
 scalaVersion := "2.12.4"
 
@@ -40,9 +40,7 @@ val http4sVersion = "0.18.16"
 
 //Scala Dependencies
 libraryDependencies ++= Seq(
-  "eu.timepit"    %% "refined"         % "0.9.0",
-  "com.slamdata"  %% "matryoshka-core" % "0.18.3",
-  //"com.chuusai"   %% "shapeless"       % "2.3.3",
+  "ch.grafblutwurst" %% "anglerfish" %  "0.1.1",
   //"co.fs2"        %% "fs2-core"        % "1.0.0-M2", //implicitly in http4s
   "com.spinoco"   %% "fs2-kafka"       % "0.2.0",
   "org.typelevel" %% "cats-effect"     % "1.0.0-RC2",
